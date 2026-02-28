@@ -1,0 +1,65 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap");
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply font-sans antialiased bg-[#0a0a0a] text-zinc-200 selection:bg-indigo-500/30;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-zinc-900/60 backdrop-blur-xl border border-white/10 shadow-xl;
+  }
+  
+  .mesh-bg {
+    background-image: 
+      radial-gradient(at 0% 0%, rgba(79, 70, 229, 0.15) 0px, transparent 50%),
+      radial-gradient(at 100% 0%, rgba(236, 72, 153, 0.15) 0px, transparent 50%);
+  }
+  
+  .grid-bg {
+    background-size: 40px 40px;
+    background-image: linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px),
+                      linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px);
+  }
+
+  .custom-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: #3f3f46 transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-zinc-700 rounded-full;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    @apply bg-zinc-600;
+  }
+}
+
+/* --- Theme Mode (Invert hack for instant Light Mode from Dark Mode) --- */
+html.light {
+  filter: invert(1) hue-rotate(180deg);
+  background-color: #f5f5f5;
+}
+
+/* Re-invert elements that shouldn't be inverted (images, explicit no-invert, avatars) */
+html.light img,
+html.light video,
+html.light [data-no-invert] {
+  filter: invert(1) hue-rotate(180deg);
+}
+
+/* Fix shadows and borders for light mode if necessary */
+html.light .glass-panel {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06) !important;
+}

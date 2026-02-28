@@ -1,0 +1,361 @@
+import { formatRole } from "../lib/utils";
+import { useState, useEffect } from "react";
+import { useSearchParams, Link } from "react-router-dom";
+import { toast } from "sonner";
+import { useAuthStore } from "../store/authStore";
+import { useDataStore } from "../store/dataStore";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "../components/ui/Card";
+import { Input } from "../components/ui/Input";
+import { Button } from "../components/ui/Button";
+import { Avatar } from "../components/ui/Avatar";
+import { Badge } from "../components/ui/Badge";
+import { Send, Search, Check, X, ShieldAlert, User, Flag, ArrowLeft, Ban } from "lucide-react";
+import { usePageTitle } from "../lib/usePageTitle";
+import { useTranslation } from "../hooks/useTranslation";
+
+export function Messages() {
+  const { t } = useTranslation();
+  usePageTitle(t("msg.title"));
+  const { user, login } = useAuthStore();
+  const { users, messages, chatThreads, sendMessage, updateThreadStatus, createThread, blockUser } = useDataStore();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [newMessage, setNewMessage] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [showBlockConfirm, setShowBlockConfirm] = useState(false);
+
+  useEffect(() => {
+    const to = searchParams.get("to");
+    if (to && user) {
+      const threadId = [user.id, to].sort().join("-");
+      const existingThread = chatThreads.find(t => t.id === threadId);
+      
+      if (!existingThread) {
+        const receiver = users.find(u => u.id === to);
+        if (receiver) {
+          createThread({
+            id: threadId,
+            participants: [user, receiver],
+            unreadCount: 0,
+            status: "PENDING",
+            initiatorId: user.id,
+          });
+          toast.success(`Message request sent to ${receiver.name}`);
+        }
+      }
+      setSelectedThreadId(threadId);
+    }
+  }, [searchParams, user, chatThreads, users, createThread]);
+
+  if (!user) return null;
+
+  // Get threads for current user, filtered by search & blocked users
+  const blockedIds = user.blockedUsers || [];
+  const myThreads = chatThreads.filter(t => {
+    if (!t.participants.some(p => p.id === user.id)) return false;
+    const other = t.participants.find(p => p.id !== user.id);
+    if (other && blockedIds.includes(other.id)) return false;
+    if (searchTerm) {
+      if (!other?.name.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+    }
+    return true;
+  });
+  const selectedThread = myThreads.find(t => t.id === selectedThreadId);
+  const selectedUser = selectedThread?.participants.find(p => p.id !== user.id);
+
+  const currentMessages = messages
+    .filter(
+      (m) =>
+        selectedUser &&
+        ((m.senderId === user.id && m.receiverId === selectedUser.id) ||
+        (m.receiverId === user.id && m.senderId === selectedUser.id)),
+    )
+    .sort(
+      (a, b) =>
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+
+  const handleSend = () => {
+    if (!newMessage.trim() || !selectedUser) return;
+
+    sendMessage({
+      id: `m${Date.now()}`,
+      senderId: user.id,
+      receiverId: selectedUser.id,
+      content: newMessage,
+      createdAt: new Date().toISOString(),
+      read: false,
+    });
+
+    setNewMessage("");
+  };
+
+  const handleAccept = () => {
+    if (selectedThreadId) {
+      updateThreadStatus(selectedThreadId, "ACCEPTED");
+      toast.success(`You can now chat with ${selectedUser?.name}`);
+    }
+  };
+
+  const handleReject = () => {
+    if (selectedThreadId) {
+      updateThreadStatus(selectedThreadId, "REJECTED");
+      setSelectedThreadId(null);
+      toast.error(`Message request from ${selectedUser?.name} rejected`);
+    }
+  };
+
+  return (
+    <div className="flex h-[calc(100vh-8rem)] gap-0 md:gap-6">
+      {/* Sidebar - hidden on mobile when a thread is selected */}
+      <Card className={`${selectedThreadId ? "hidden md:flex" : "flex"} w-full md:w-80 flex-col overflow-hidden glass-panel`}>
+        <CardHeader className="border-b border-white/10 p-4">
+          <CardTitle className="text-lg text-zinc-100">{t("msg.title")}</CardTitle>
+          <div className="relative mt-4">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <Input placeholder={t("msg.search_pl")} className="pl-9 h-9" value={searchTerm} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchTerm(e.target.value)} />
+          </div>
+        </CardHeader>
+        <CardContent className="flex-1 overflow-y-auto p-0 custom-scrollbar">
+          {/* Message Requests Section */}
+          {(() => {
+            const pendingRequests = myThreads.filter(t => t.status === "PENDING" && t.initiatorId !== user.id);
+            if (pendingRequests.length === 0) return null;
+            return (
+              <div>
+                <div className="px-4 py-2 bg-amber-500/10 border-b border-amber-500/20">
+                  <p className="text-xs font-medium text-amber-400">{t("msg.requests")} ({pendingRequests.length})</p>
+                </div>
+                {pendingRequests.map((thread) => {
+                  const chatUser = thread.participants.find(p => p.id !== user.id);
+                  if (!chatUser) return null;
+                  return (
+                    <div
+                      key={thread.id}
+                      onClick={() => {
+                        setSelectedThreadId(thread.id);
+                        setSearchParams({});
+                      }}
+                      className={`flex cursor-pointer items-center gap-3 border-b border-amber-500/10 p-4 transition-colors hover:bg-amber-500/5 ${selectedThreadId === thread.id ? "bg-amber-500/10" : ""}`}
+                    >
+                      <Avatar src={chatUser.avatar} fallback={chatUser.name.charAt(0)} />
+                      <div className="flex-1 overflow-hidden">
+                        <p className="truncate font-medium text-zinc-100">{chatUser.name}</p>
+                        <p className="truncate text-xs text-amber-400 font-medium">{t("msg.new_request")}</p>
+                      </div>
+                      <span className="h-2.5 w-2.5 rounded-full bg-amber-400 shrink-0" />
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
+          {/* Active Conversations */}
+          {(() => {
+            const activeThreads = myThreads.filter(t => t.status !== "REJECTED" && !(t.status === "PENDING" && t.initiatorId !== user.id));
+            if (activeThreads.length === 0 && myThreads.filter(t => t.status === "PENDING" && t.initiatorId !== user.id).length === 0) {
+              return <p className="text-sm text-zinc-500 text-center py-8">{t("msg.no_conversations")}</p>;
+            }
+            return activeThreads.map((thread) => {
+              const chatUser = thread.participants.find(p => p.id !== user.id);
+              if (!chatUser) return null;
+              
+              const lastMsg = thread.lastMessage;
+
+              return (
+                <div
+                  key={thread.id}
+                  onClick={() => {
+                    setSelectedThreadId(thread.id);
+                    setSearchParams({});
+                  }}
+                  className={`flex cursor-pointer items-center gap-3 border-b border-white/5 p-4 transition-colors hover:bg-zinc-800/50 ${selectedThreadId === thread.id ? "bg-zinc-800/80" : ""}`}
+                >
+                  <Avatar
+                    src={chatUser.avatar}
+                    fallback={chatUser.name.charAt(0)}
+                  />
+                  <div className="flex-1 overflow-hidden">
+                    <div className="flex items-center justify-between">
+                      <p className="truncate font-medium text-zinc-100">
+                        {chatUser.name}
+                      </p>
+                      {lastMsg && (
+                        <span className="text-[10px] text-zinc-500">
+                          {new Date(lastMsg.createdAt).toLocaleDateString()}
+                        </span>
+                      )}
+                    </div>
+                    <p className={`truncate text-xs ${thread.status === "PENDING" ? "text-zinc-500 italic" : "text-zinc-400"}`}>
+                      {thread.status === "PENDING" ? t("msg.waiting_accept") : (lastMsg ? lastMsg.content : t("msg.start_conv"))}
+                    </p>
+                  </div>
+                  {thread.unreadCount > 0 && (
+                    <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-indigo-600 px-1.5 text-[10px] font-bold text-white shrink-0">
+                      {thread.unreadCount}
+                    </span>
+                  )}
+                </div>
+              );
+            });
+          })()}
+        </CardContent>
+      </Card>
+
+      {/* Chat Area - hidden on mobile when no thread is selected */}
+      <Card className={`${selectedThreadId ? "flex" : "hidden md:flex"} flex-1 flex-col overflow-hidden glass-panel`}>
+        {selectedThread && selectedUser ? (
+          <>
+            <CardHeader className="border-b border-white/10 p-4 flex flex-row items-center gap-4">
+              <button
+                onClick={() => setSelectedThreadId(null)}
+                className="md:hidden flex items-center justify-center h-8 w-8 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-zinc-100 transition-colors"
+              >
+                <ArrowLeft className="h-5 w-5" />
+              </button>
+              <Avatar
+                src={selectedUser.avatar}
+                fallback={selectedUser.name.charAt(0)}
+              />
+              <div className="flex-1">
+                <CardTitle className="text-lg text-zinc-100">{selectedUser.name}</CardTitle>
+                <p className="text-xs text-zinc-400">
+                  {selectedUser.title || formatRole(selectedUser.role)}
+                  {selectedUser.company ? ` at ${selectedUser.company}` : ""}
+                </p>
+              </div>
+              <div className="flex items-center gap-1">
+                <Link to={`/u/${selectedUser.id}`}>
+                  <Button variant="ghost" size="sm" className="gap-1.5 text-zinc-400 hover:text-zinc-100">
+                    <User className="h-4 w-4" />
+                    {t("common.profile")}
+                  </Button>
+                </Link>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-zinc-500 hover:text-red-400"
+                  title={t("msg.block_user")}
+                  onClick={() => setShowBlockConfirm(true)}
+                >
+                  <Ban className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-zinc-500 hover:text-red-400"
+                  title={t("msg.report_user")}
+                  onClick={() => toast.info("Report functionality coming soon")}
+                >
+                  <Flag className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardHeader>
+
+            {/* Block confirmation dialog */}
+            {showBlockConfirm && (
+              <div className="border-b border-red-500/20 bg-red-500/5 px-4 py-3 flex items-center justify-between">
+                <p className="text-sm text-red-400">Block {selectedUser.name}? You won't see their messages anymore.</p>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setShowBlockConfirm(false)}>{t("msg.cancel")}</Button>
+                  <Button size="sm" variant="outline" className="h-7 text-xs border-red-500/30 text-red-400 hover:bg-red-500/10" onClick={() => {
+                    blockUser(user.id, selectedUser.id);
+                    login({ ...user, blockedUsers: [...blockedIds, selectedUser.id] });
+                    setShowBlockConfirm(false);
+                    setSelectedThreadId(null);
+                    toast.success(`${selectedUser.name} has been blocked`);
+                  }}>
+                    <Ban className="h-3 w-3 mr-1" /> {t("msg.block")}
+                  </Button>
+                </div>
+              </div>
+            )}
+            
+            <CardContent className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar flex flex-col">
+              {currentMessages.map((msg) => {
+                const isMe = msg.senderId === user.id;
+                return (
+                  <div
+                    key={msg.id}
+                    className={`flex ${isMe ? "justify-end" : "justify-start"}`}
+                  >
+                    <div
+                      className={`max-w-[70%] rounded-2xl px-4 py-2 ${isMe ? "bg-indigo-600 text-white rounded-br-sm shadow-[0_0_10px_rgba(79,70,229,0.3)]" : "bg-zinc-800 text-zinc-100 rounded-bl-sm border border-white/5"}`}
+                    >
+                      <p className="text-sm">{msg.content}</p>
+                      <span
+                        className={`mt-1 block text-[10px] ${isMe ? "text-indigo-200" : "text-zinc-500"}`}
+                      >
+                        {new Date(msg.createdAt).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+              
+              {selectedThread.status === "PENDING" && selectedThread.initiatorId !== user.id && (
+                <div className="mt-auto pt-4">
+                  <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-6 text-center">
+                    <ShieldAlert className="mx-auto mb-3 h-8 w-8 text-amber-400" />
+                    <h3 className="mb-2 text-lg font-medium text-amber-400">{t("msg.requests")}</h3>
+                    <p className="mb-6 text-sm text-zinc-300">
+                      {(t("msg.req_desc") as string).replace("{name}", selectedUser.name)}
+                    </p>
+                    <div className="flex justify-center gap-4">
+                      <Button variant="outline" className="border-red-500/30 text-red-400 hover:bg-red-500/10 hover:text-red-300" onClick={handleReject}>
+                        <X className="mr-2 h-4 w-4" />
+                        {t("msg.reject")}
+                      </Button>
+                      <Button className="bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.3)]" onClick={handleAccept}>
+                        <Check className="mr-2 h-4 w-4" />
+                        {t("msg.accept")}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {selectedThread.status === "PENDING" && selectedThread.initiatorId === user.id && (
+                <div className="mt-auto pt-4 text-center text-sm text-zinc-500">
+                  {(t("msg.waiting_other") as string).replace("{name}", selectedUser.name)}
+                </div>
+              )}
+            </CardContent>
+            
+            {selectedThread.status === "ACCEPTED" && (
+              <div className="border-t border-white/10 p-4 flex items-center gap-2 bg-zinc-900/50">
+                <Input
+                  placeholder={t("msg.type_pl")}
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && handleSend()}
+                  className="flex-1"
+                />
+                <Button
+                  size="icon"
+                  onClick={handleSend}
+                  disabled={!newMessage.trim()}
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="flex flex-1 items-center justify-center text-zinc-500">
+            {t("msg.select_conv")}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
