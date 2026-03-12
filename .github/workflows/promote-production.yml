@@ -138,10 +138,22 @@ jobs:
             exit 1
           fi
 
-      - name: Configure SSH
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+      - name: Configure SSH key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${DEPLOY_SSH_KEY}" | tr -d '\r' > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: Verify SSH connectivity
+        env:
+          SSH_HOST: ${{ secrets.DEPLOY_HOST }}
+          SSH_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=15 "${SSH_USER}@${SSH_HOST}" "hostname && docker --version"
 
       - name: Deploy production stack
         env:
@@ -155,7 +167,7 @@ jobs:
         run: |
           set -euo pipefail
           remote_env="REGISTRY=${REGISTRY@Q} REGISTRY_HOST=${REGISTRY_HOST@Q} REGISTRY_USER=${REGISTRY_USER@Q} REGISTRY_PASSWORD=${REGISTRY_PASSWORD@Q} IMAGE_TAG=${IMAGE_TAG@Q}"
-          ssh -o StrictHostKeyChecking=no "${SSH_USER}@${SSH_HOST}" "${remote_env} bash -s" <<'EOF'
+          ssh -i ~/.ssh/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=no "${SSH_USER}@${SSH_HOST}" "${remote_env} bash -s" <<'EOF'
             set -euo pipefail
             printf '%s' "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" -u "${REGISTRY_USER}" --password-stdin
             cd /opt/aiworld/server
@@ -176,7 +188,7 @@ jobs:
           SSH_HOST: ${{ secrets.DEPLOY_HOST }}
           SSH_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          ssh -o StrictHostKeyChecking=no "${SSH_USER}@${SSH_HOST}" <<'EOF'
+          ssh -i ~/.ssh/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=no "${SSH_USER}@${SSH_HOST}" <<'EOF'
             set -euo pipefail
             cd /opt/aiworld/server
             sleep 5
