@@ -13,6 +13,7 @@ import type {
   InviteStatus,
   KnowledgeDocument,
   Message,
+  PublicInviteSample,
   Role,
   ThreadStatus,
   User,
@@ -770,6 +771,10 @@ export async function verifyInviteCodeByApi(code: string): Promise<InviteCode | 
   const normalized: InviteCode = {
     id: String((invite as any)?.id ?? `inv-${Date.now()}`),
     code: String((invite as any)?.code ?? code),
+    role:
+      typeof (invite as any)?.role === "string"
+        ? normalizeRoleValue((invite as any)?.role)
+        : undefined,
     issuedByAdminId: typeof (invite as any)?.issuedByAdminId === "string" ? (invite as any).issuedByAdminId : undefined,
     boundUserId: typeof (invite as any)?.boundUserId === "string" ? (invite as any).boundUserId : undefined,
     status: normalizeInviteStatusValue((invite as any)?.status),
@@ -778,6 +783,25 @@ export async function verifyInviteCodeByApi(code: string): Promise<InviteCode | 
   };
 
   return normalized;
+}
+
+export async function fetchPublicInviteSamplesByApi(): Promise<PublicInviteSample[]> {
+  const response = await apiFetch(getApiPath("/api/auth/invite/samples"));
+
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Fetch public invite samples"));
+  }
+
+  const json = await response.json();
+  const body = unwrap(json as ApiEnvelope<PublicInviteSample[] | { items?: PublicInviteSample[] }>);
+  const list = Array.isArray(body) ? body : asArray<PublicInviteSample>((body as any)?.items);
+
+  return list
+    .map((item) => ({
+      code: typeof (item as any)?.code === "string" ? (item as any).code : "",
+      role: normalizeRoleValue((item as any)?.role),
+    }))
+    .filter((item) => item.code.length > 0);
 }
 
 function normalizeThreadStatus(status: unknown): ChatThread["status"] {

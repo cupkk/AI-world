@@ -32,6 +32,19 @@ const DEFAULT_DEV_DEMO_INVITE_CODES = [
 ];
 
 type DemoRole = 'EXPERT' | 'LEARNER' | 'ENTERPRISE_LEADER';
+type ReusableInviteSource = 'demo' | 'public_sample';
+
+type ReusableInviteDefinition = {
+  code: string;
+  role: DemoRole;
+  source: ReusableInviteSource;
+};
+
+const DEFAULT_PUBLIC_SAMPLE_INVITES: Array<Omit<ReusableInviteDefinition, 'source'>> = [
+  { code: 'AIWORLD-EXPERT-2026', role: 'EXPERT' },
+  { code: 'AIWORLD-LEARNER-2026', role: 'LEARNER' },
+  { code: 'AIWORLD-ENTERPRISE-2026', role: 'ENTERPRISE_LEADER' },
+];
 
 @Injectable()
 export class AuthService {
@@ -85,6 +98,69 @@ export class AuthService {
       .filter(Boolean);
   }
 
+  private normalizeDemoRole(roleLike: string): DemoRole {
+    const normalized = roleLike.trim().toUpperCase();
+    if (normalized === 'EXPERT') {
+      return 'EXPERT';
+    }
+    if (
+      normalized === 'ENTERPRISE' ||
+      normalized === 'ENTERPRISE_LEADER' ||
+      normalized === 'ENTERPRISE-LEADER'
+    ) {
+      return 'ENTERPRISE_LEADER';
+    }
+    return 'LEARNER';
+  }
+
+  private parseReusableInviteDefinitions(
+    raw: string,
+    source: ReusableInviteSource,
+  ): ReusableInviteDefinition[] {
+    return raw
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((entry) => {
+        const [maybeRole, ...codeParts] = entry.split(':');
+        const code = (
+          codeParts.length > 0 ? codeParts.join(':') : maybeRole
+        )
+          .trim()
+          .toUpperCase();
+
+        if (!code) {
+          return null;
+        }
+
+        const role =
+          codeParts.length > 0
+            ? this.normalizeDemoRole(maybeRole)
+            : this.inferDemoRole(code);
+
+        return {
+          code,
+          role,
+          source,
+        } satisfies ReusableInviteDefinition;
+      })
+      .filter((item): item is ReusableInviteDefinition => Boolean(item));
+  }
+
+  private isPublicSampleInviteEnabled(): boolean {
+    return parseBooleanFlag(
+      this.configService.get<string>('ENABLE_PUBLIC_SAMPLE_INVITES'),
+      true,
+    );
+  }
+
+  private getConfiguredPublicSampleInvites(): ReusableInviteDefinition[] {
+    return this.parseReusableInviteDefinitions(
+      this.configService.get<string>('PUBLIC_SAMPLE_INVITES', ''),
+      'public_sample',
+    );
+  }
+
   private warnIfProductionDemoInviteConfigured() {
     if (this.demoInviteProdWarningLogged || !this.isProduction()) {
       return;
@@ -127,8 +203,48 @@ export class AuthService {
     return DEFAULT_DEV_DEMO_INVITE_CODES;
   }
 
-  private isReusableDemoInviteCode(code: string): boolean {
-    return this.getReusableDemoInviteCodes().includes(code.trim().toUpperCase());
+  private getPublicSampleInvites(): ReusableInviteDefinition[] {
+    if (!this.isPublicSampleInviteEnabled()) {
+      return [];
+    }
+
+    const configuredInvites = this.getConfiguredPublicSampleInvites();
+    if (configuredInvites.length > 0) {
+      return configuredInvites;
+    }
+
+    return DEFAULT_PUBLIC_SAMPLE_INVITES.map((item) => ({
+      ...item,
+      source: 'public_sample',
+    }));
+  }
+
+  private getReusableDemoInvites(): ReusableInviteDefinition[] {
+    return this.getReusableDemoInviteCodes().map((code) => ({
+      code,
+      role: this.inferDemoRole(code),
+      source: 'demo',
+    }));
+  }
+
+  private findReusableInvite(code: string): ReusableInviteDefinition | null {
+    const normalizedCode = code.trim().toUpperCase();
+
+    const publicSample = this.getPublicSampleInvites().find(
+      (item) => item.code === normalizedCode,
+    );
+    if (publicSample) {
+      return publicSample;
+    }
+
+    const demoInvite = this.getReusableDemoInvites().find(
+      (item) => item.code === normalizedCode,
+    );
+    if (demoInvite) {
+      return demoInvite;
+    }
+
+    return null;
   }
 
   private inferDemoRole(code: string): DemoRole {
@@ -142,13 +258,20 @@ export class AuthService {
     return 'LEARNER';
   }
 
+  getPublicInviteSamples() {
+    return this.getPublicSampleInvites().map((item) => ({
+      code: item.code,
+      role: item.role,
+    }));
+  }
+
   private buildProfileData(
     userId: string,
     dto: RegisterDto,
     role: DemoRole,
-    isReusableDemoInvite: boolean,
+    isReusableInvite: boolean,
   ) {
-    if (!isReusableDemoInvite) {
+    if (!isReusableInvite) {
       return {
         userId,
         displayName: dto.displayName,
@@ -198,17 +321,20 @@ export class AuthService {
 
   /**
    * Verify invite code is valid and unused
-   * Configured reusable demo codes always pass regardless of DB state
+   * Reusable public sample invites and dev demo invites always pass regardless of DB state
    */
   async verifyInviteCode(code: string) {
     const normalizedCode = code.trim().toUpperCase();
 
     // Dev demo codes always valid — skip DB check entirely
-    if (this.isReusableDemoInviteCode(normalizedCode)) {
+    const reusableInvite = this.findReusableInvite(normalizedCode);
+
+    if (reusableInvite) {
       return {
         valid: true,
-        id: `demo-${normalizedCode}`,
+        id: `${reusableInvite.source}-${normalizedCode}`,
         code: normalizedCode,
+        role: reusableInvite.role,
         status: 'UNUSED',
         createdAt: new Date().toISOString(),
       };
@@ -238,20 +364,21 @@ export class AuthService {
    */
   async register(dto: RegisterDto) {
     const normalizedInviteCode = dto.inviteCode.trim().toUpperCase();
-    const isReusableDemoInvite = this.isReusableDemoInviteCode(normalizedInviteCode);
+    const reusableInvite = this.findReusableInvite(normalizedInviteCode);
+    const isReusableInvite = Boolean(reusableInvite);
 
     // 1. Verify invite code
-    const invite = isReusableDemoInvite
+    const invite = isReusableInvite
       ? null
       : await this.prisma.invite.findUnique({
           where: { code: normalizedInviteCode },
         });
 
-    if (!isReusableDemoInvite && (!invite || invite.status !== 'unused')) {
+    if (!isReusableInvite && (!invite || invite.status !== 'unused')) {
       throw new BadRequestException('Invalid or already used invite code');
     }
 
-    if (!isReusableDemoInvite && invite?.expiresAt && invite.expiresAt < new Date()) {
+    if (!isReusableInvite && invite?.expiresAt && invite.expiresAt < new Date()) {
       throw new BadRequestException('Invite code has expired');
     }
 
@@ -269,12 +396,11 @@ export class AuthService {
 
     // 4. Determine role & status
     //    Demo invite codes → auto-activate with role inferred from code
-    let userRole: DemoRole = 'LEARNER';
+    let userRole: DemoRole = reusableInvite?.role ?? 'LEARNER';
     let userStatus: string = 'pending_identity_review';
 
-    if (isReusableDemoInvite) {
+    if (isReusableInvite) {
       userStatus = 'active';
-      userRole = this.inferDemoRole(normalizedInviteCode);
     }
 
     // 5. Create user + profile + mark invite as used (transaction)
@@ -293,11 +419,11 @@ export class AuthService {
           newUser.id,
           dto,
           userRole,
-          isReusableDemoInvite,
+          isReusableInvite,
         ) as any,
       });
 
-      if (!isReusableDemoInvite && invite) {
+      if (!isReusableInvite && invite) {
         await tx.invite.update({
           where: { id: invite.id },
           data: {

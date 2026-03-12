@@ -31,6 +31,8 @@ const defaultConfigValues: Record<string, string> = {
   NODE_ENV: 'development',
   ENABLE_DEMO_INVITES: '',
   DEMO_INVITE_CODES: '',
+  ENABLE_PUBLIC_SAMPLE_INVITES: '',
+  PUBLIC_SAMPLE_INVITES: '',
 };
 
 function getConfigValue(key: string, fallback?: any) {
@@ -106,8 +108,18 @@ describe('AuthService', () => {
     });
 
     it('should fall back to dev demo code in development', async () => {
+      mockConfig.get.mockImplementation((key: string, fallback?: any) => {
+        const map: Record<string, string> = {
+          NODE_ENV: 'development',
+          ENABLE_DEMO_INVITES: 'true',
+          DEMO_INVITE_CODES: 'LOCAL-DEMO-EXPERT',
+          ENABLE_PUBLIC_SAMPLE_INVITES: 'false',
+        };
+        return map[key] ?? fallback;
+      });
+
       mockPrisma.invite.findUnique.mockResolvedValue(null);
-      const result = await service.verifyInviteCode('AIWORLD-EXPERT-2026');
+      const result = await service.verifyInviteCode('LOCAL-DEMO-EXPERT');
       expect(result.valid).toBe(true);
       expect(result.id).toContain('demo-');
     });
@@ -118,6 +130,7 @@ describe('AuthService', () => {
           NODE_ENV: 'production',
           ENABLE_DEMO_INVITES: 'true',
           DEMO_INVITE_CODES: 'AIWORLD-ENTERPRISE-2026',
+          ENABLE_PUBLIC_SAMPLE_INVITES: 'false',
         };
         return map[key] ?? fallback;
       });
@@ -134,6 +147,23 @@ describe('AuthService', () => {
       await expect(service.verifyInviteCode('BAD-CODE')).rejects.toThrow(
         BadRequestException,
       );
+    });
+
+    it('should expose public sample invites in production when enabled', async () => {
+      mockConfig.get.mockImplementation((key: string, fallback?: any) => {
+        const map: Record<string, string> = {
+          NODE_ENV: 'production',
+          ENABLE_PUBLIC_SAMPLE_INVITES: 'true',
+          PUBLIC_SAMPLE_INVITES:
+            'EXPERT:AIWORLD-EXPERT-2026,LEARNER:AIWORLD-LEARNER-2026',
+        };
+        return map[key] ?? fallback;
+      });
+
+      const result = await service.verifyInviteCode('AIWORLD-EXPERT-2026');
+      expect(result.valid).toBe(true);
+      expect(result.role).toBe('EXPERT');
+      expect(result.id).toContain('public_sample-');
     });
   });
 
@@ -192,6 +222,56 @@ describe('AuthService', () => {
         }),
       );
       expect(result.role).toBe('EXPERT');
+      expect(result.onboardingDone).toBe(true);
+    });
+
+    it('should create an active account from a public sample invite in production', async () => {
+      mockConfig.get.mockImplementation((key: string, fallback?: any) => {
+        const map: Record<string, string> = {
+          NODE_ENV: 'production',
+          ENABLE_PUBLIC_SAMPLE_INVITES: 'true',
+          PUBLIC_SAMPLE_INVITES:
+            'ENTERPRISE_LEADER:AIWORLD-ENTERPRISE-2026',
+        };
+        return map[key] ?? fallback;
+      });
+
+      mockPrisma.user.findUnique
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          id: 'u-enterprise',
+          email: 'enterprise@sample.aiworld.dev',
+          role: 'ENTERPRISE_LEADER',
+          status: 'active',
+          profile: {
+            displayName: 'Sample Enterprise',
+            onboardingDone: true,
+            profileTags: [],
+          },
+        });
+      mockPrisma.user.create.mockResolvedValue({
+        id: 'u-enterprise',
+        email: 'enterprise@sample.aiworld.dev',
+      });
+      mockPrisma.profile.create.mockResolvedValue({});
+
+      const result = await service.register({
+        email: 'enterprise@sample.aiworld.dev',
+        password: 'Demo@2026',
+        displayName: 'Sample Enterprise',
+        inviteCode: 'AIWORLD-ENTERPRISE-2026',
+      });
+
+      expect(mockPrisma.invite.update).not.toHaveBeenCalled();
+      expect(mockPrisma.user.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            role: 'ENTERPRISE_LEADER',
+            status: 'active',
+          }),
+        }),
+      );
+      expect(result.role).toBe('ENTERPRISE_LEADER');
       expect(result.onboardingDone).toBe(true);
     });
   });

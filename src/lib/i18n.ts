@@ -1519,6 +1519,45 @@ Object.assign(dictionaries.en, {
   "api.fallback_local": "Service is temporarily unavailable.",
   "settings.kb_fallback_local":
     "Upload service is temporarily unavailable. Please try again later.",
+  "invite_page.sample_desc":
+    "Public access codes for the three primary roles. Use them to preview the full product flow before requesting a dedicated invitation.",
+  "invite_page.sample_tip_fill":
+    "These sample access codes are valid reusable experience codes. Dedicated invitations are still recommended for formal collaboration.",
+  "invite_page.sample_loading": "Loading experience codes...",
+  "login.register_step_desc":
+    "Verify an access code first, then finish account setup in one clean flow.",
+  "login.invite_desc":
+    "AI-World supports dedicated invitations and public experience codes. Verify one first to unlock registration.",
+  "login.register_step_invite": "Verify access code",
+  "login.register_step_account": "Create account",
+  "login.register_unlock_title": "Start with an invitation code",
+  "login.register_unlock_desc":
+    "Enter your own code or pick a public experience code below to unlock registration.",
+  "login.verify_invite": "Verify code",
+  "login.sample_invites": "Public experience codes",
+  "login.more_invites": "Open full invite page",
+  "login.sample_invite_hint": "Use a dedicated code when you need a private rollout.",
+});
+
+Object.assign(dictionaries.zh, {
+  "invite_page.sample_desc":
+    "提供三类角色的公开体验邀请码，可直接走完整注册体验；如需正式协作，仍建议使用平台单独签发的邀请码。",
+  "invite_page.sample_tip_fill":
+    "这些示例现在是可用的公开体验码，可重复验证和注册；正式协作场景建议使用专属邀请码。",
+  "invite_page.sample_loading": "正在加载体验邀请码...",
+  "login.register_step_desc":
+    "先验证邀请码，再完成账户资料填写，注册流程保持两步完成。",
+  "login.invite_desc":
+    "AI-World 同时支持专属邀请码和公开体验邀请码，先完成验证后再继续注册。",
+  "login.register_step_invite": "验证邀请码",
+  "login.register_step_account": "创建账户",
+  "login.register_unlock_title": "先完成邀请码验证",
+  "login.register_unlock_desc":
+    "输入你的邀请码，或直接选择下方公开体验邀请码，验证通过后即可继续注册。",
+  "login.verify_invite": "验证邀请码",
+  "login.sample_invites": "公开体验邀请码",
+  "login.more_invites": "打开完整邀请页",
+  "login.sample_invite_hint": "正式协作或灰度发放时请使用专属邀请码。",
 });
 
 export type DictKey = keyof typeof dictionaries.en;

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { mockInviteApis } from "./helpers/mockApi";
 import { installStrictApiMocking } from "./helpers/strictApi";
 
 test.describe("invite samples", () => {
@@ -6,6 +7,7 @@ test.describe("invite samples", () => {
     page,
   }) => {
     await installStrictApiMocking(page);
+    await mockInviteApis(page);
     await page.goto("/invite");
 
     await expect(page.getByTestId("invite-example-expert")).toBeVisible();
@@ -16,7 +18,7 @@ test.describe("invite samples", () => {
 
     await page.getByTestId("invite-example-apply-learner").click();
     await expect(page.getByTestId("invite-code-input")).toHaveValue(
-      "AIWORLD-LEARNER-EXAMPLE",
+      "AIWORLD-LEARNER-2026",
     );
   });
 
@@ -24,6 +26,7 @@ test.describe("invite samples", () => {
     page,
   }) => {
     await installStrictApiMocking(page);
+    await mockInviteApis(page);
     await page.goto("/invite");
 
     await expect(page.getByTestId("invite-example-expert")).toBeVisible();

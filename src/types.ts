@@ -124,11 +124,17 @@ export type InviteStatus = (typeof INVITE_STATUS_VALUES)[number];
 export interface InviteCode {
   id: string;
   code: string;
+  role?: Role;
   issuedByAdminId?: string;
   boundUserId?: string;
   status: InviteStatus;
   expiresAt?: string;
   createdAt: string;
+}
+
+export interface PublicInviteSample {
+  code: string;
+  role: Role;
 }
 
 // Application system for project participation

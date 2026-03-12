@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { USERS } from "./helpers/auth";
-import { mockLoginApis } from "./helpers/mockApi";
+import { mockInviteApis, mockLoginApis } from "./helpers/mockApi";
 import { installStrictApiMocking } from "./helpers/strictApi";
 
 test.describe("login", () => {
@@ -23,5 +23,21 @@ test.describe("login", () => {
     const authState = JSON.parse(authRaw as string);
     expect(authState.state.isAuthenticated).toBe(true);
     expect(authState.state.user.role).toBe("LEARNER");
+  });
+
+  test("unlocks register form after verifying a sample invite", async ({
+    page,
+  }) => {
+    await installStrictApiMocking(page);
+    await mockInviteApis(page);
+
+    await page.goto("/login?tab=register");
+
+    await page.getByTestId("login-sample-learner").click();
+
+    await expect(page.getByTestId("register-invite-verified")).toBeVisible();
+    await expect(page.locator('input[type="email"]')).toBeVisible();
+    await expect(page.locator('input[type="password"]')).toBeVisible();
+    await expect(page.locator('input[type="text"]')).toHaveValue("");
   });
 });

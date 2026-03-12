@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import type { TestUser } from "./auth";
+import { DEFAULT_PUBLIC_INVITE_SAMPLES } from "../../../src/lib/inviteSamples";
 
 type MockContent = Record<string, unknown>;
 type MockThread = Record<string, unknown>;
@@ -105,6 +106,44 @@ export async function mockLoginApis(
 
   await page.route("**/api/applications/mine", async (route) => {
     await route.fulfill(json([]));
+  });
+}
+
+export async function mockInviteApis(
+  page: Page,
+  {
+    samples = DEFAULT_PUBLIC_INVITE_SAMPLES,
+  }: {
+    samples?: Array<{ code: string; role: string }>;
+  } = {},
+) {
+  await page.route("**/api/auth/invite/samples", async (route) => {
+    await route.fulfill(json(samples));
+  });
+
+  await page.route("**/api/auth/invite/verify", async (route) => {
+    const body = route.request().postDataJSON() as { code?: string } | undefined;
+    const normalizedCode = String(body?.code ?? "").trim().toUpperCase();
+    const match = samples.find((item) => item.code.toUpperCase() === normalizedCode);
+
+    if (!match) {
+      await route.fulfill({
+        status: 400,
+        contentType: "application/json",
+        body: JSON.stringify({ code: 400, message: "Invalid invite code" }),
+      });
+      return;
+    }
+
+    await route.fulfill(
+      json({
+        id: `public_sample-${normalizedCode}`,
+        code: normalizedCode,
+        role: match.role,
+        status: "UNUSED",
+        createdAt: new Date("2026-03-13T00:00:00.000Z").toISOString(),
+      }),
+    );
   });
 }
 

@@ -21,6 +21,14 @@ import { CurrentUser, CurrentUserPayload } from '../../common/decorators/current
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  @Get('invite/samples')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '获取公开体验邀请码列表' })
+  async getPublicInviteSamples() {
+    return this.authService.getPublicInviteSamples();
+  }
+
   @Post('invite/verify')
   @Public()
   @HttpCode(HttpStatus.OK)

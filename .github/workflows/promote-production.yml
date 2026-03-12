@@ -8,8 +8,13 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+  packages: read
+
 env:
-  NODE_VERSION: '20'
+  NODE_VERSION: "22"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   verify-staging:
@@ -17,8 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: staging
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -42,7 +47,7 @@ jobs:
         env:
           PLAYWRIGHT_BASE_URL: ${{ secrets.STAGING_BASE_URL }}
           STAGING_BASE_URL: ${{ secrets.STAGING_BASE_URL }}
-          LIVE_ALLOW_MUTATIONS: '1'
+          LIVE_ALLOW_MUTATIONS: "1"
           LIVE_ADMIN_EMAIL_STAGING: ${{ secrets.LIVE_ADMIN_EMAIL_STAGING }}
           LIVE_ADMIN_PASSWORD_STAGING: ${{ secrets.LIVE_ADMIN_PASSWORD_STAGING }}
           LIVE_LEARNER_EMAIL_STAGING: ${{ secrets.LIVE_LEARNER_EMAIL_STAGING }}
@@ -59,7 +64,79 @@ jobs:
     needs: verify-staging
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+
+      - name: Resolve container registry
+        id: registry
+        env:
+          INPUT_DOCKER_REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
+          INPUT_DOCKER_REGISTRY_HOST: ${{ secrets.DOCKER_REGISTRY_HOST }}
+          INPUT_DOCKER_REGISTRY_USER: ${{ secrets.DOCKER_REGISTRY_USER }}
+          INPUT_DOCKER_REGISTRY_PASS: ${{ secrets.DOCKER_REGISTRY_PASS }}
+          FALLBACK_ACTOR: ${{ github.actor }}
+          FALLBACK_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          owner="$(printf '%s' "${REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')"
+          repo="$(printf '%s' "${REPOSITORY##*/}" | tr '[:upper:]' '[:lower:]')"
+          default_registry="ghcr.io/${owner}/${repo}"
+          derived_host="${INPUT_DOCKER_REGISTRY%%/*}"
+          using_custom_registry=0
+          if [ -n "${INPUT_DOCKER_REGISTRY}" ] || [ -n "${INPUT_DOCKER_REGISTRY_HOST}" ]; then
+            using_custom_registry=1
+          fi
+
+          if [ "${using_custom_registry}" -eq 1 ]; then
+            registry="${INPUT_DOCKER_REGISTRY}"
+            registry_host="${INPUT_DOCKER_REGISTRY_HOST:-${derived_host}}"
+            registry_user="${INPUT_DOCKER_REGISTRY_USER}"
+            registry_password="${INPUT_DOCKER_REGISTRY_PASS}"
+
+            if [ -z "${registry}" ] || [ -z "${registry_host}" ] || [ -z "${registry_user}" ] || [ -z "${registry_password}" ]; then
+              echo "::error::Custom registry mode requires DOCKER_REGISTRY, DOCKER_REGISTRY_HOST, DOCKER_REGISTRY_USER, and DOCKER_REGISTRY_PASS."
+              exit 1
+            fi
+          else
+            registry="${default_registry}"
+            registry_host="ghcr.io"
+            registry_user="${FALLBACK_ACTOR}"
+            registry_password="${FALLBACK_TOKEN}"
+          fi
+          {
+            echo "registry=${registry}"
+            echo "registry_host=${registry_host}"
+            echo "registry_user=${registry_user}"
+            echo "registry_password=${registry_password}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Validate production secrets
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          PRODUCTION_BASE_URL: ${{ secrets.PRODUCTION_BASE_URL }}
+          LIVE_ADMIN_EMAIL: ${{ secrets.LIVE_ADMIN_EMAIL }}
+          LIVE_ADMIN_PASSWORD: ${{ secrets.LIVE_ADMIN_PASSWORD }}
+          LIVE_LEARNER_EMAIL: ${{ secrets.LIVE_LEARNER_EMAIL }}
+          LIVE_LEARNER_PASSWORD: ${{ secrets.LIVE_LEARNER_PASSWORD }}
+          LIVE_EXPERT_EMAIL: ${{ secrets.LIVE_EXPERT_EMAIL }}
+          LIVE_EXPERT_PASSWORD: ${{ secrets.LIVE_EXPERT_PASSWORD }}
+          LIVE_ENTERPRISE_EMAIL: ${{ secrets.LIVE_ENTERPRISE_EMAIL }}
+          LIVE_ENTERPRISE_PASSWORD: ${{ secrets.LIVE_ENTERPRISE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for key in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY PRODUCTION_BASE_URL LIVE_ADMIN_EMAIL LIVE_ADMIN_PASSWORD LIVE_LEARNER_EMAIL LIVE_LEARNER_PASSWORD LIVE_EXPERT_EMAIL LIVE_EXPERT_PASSWORD LIVE_ENTERPRISE_EMAIL LIVE_ENTERPRISE_PASSWORD; do
+            if [ -z "${!key}" ]; then
+              echo "::error::Missing required secret: ${key}"
+              missing=1
+            fi
+          done
+          if [ "${missing}" -ne 0 ]; then
+            exit 1
+          fi
 
       - name: Configure SSH
         uses: webfactory/ssh-agent@v0.9.0
@@ -68,26 +145,31 @@ jobs:
 
       - name: Deploy production stack
         env:
-          REGISTRY: ${{ secrets.DOCKER_REGISTRY }}
+          REGISTRY: ${{ steps.registry.outputs.registry }}
+          REGISTRY_HOST: ${{ steps.registry.outputs.registry_host }}
+          REGISTRY_USER: ${{ steps.registry.outputs.registry_user }}
+          REGISTRY_PASSWORD: ${{ steps.registry.outputs.registry_password }}
           SSH_HOST: ${{ secrets.DEPLOY_HOST }}
           SSH_USER: ${{ secrets.DEPLOY_USER }}
           IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
-          ssh -o StrictHostKeyChecking=no "${SSH_USER}@${SSH_HOST}" <<'EOF'
+          set -euo pipefail
+          remote_env="REGISTRY=${REGISTRY@Q} REGISTRY_HOST=${REGISTRY_HOST@Q} REGISTRY_USER=${REGISTRY_USER@Q} REGISTRY_PASSWORD=${REGISTRY_PASSWORD@Q} IMAGE_TAG=${IMAGE_TAG@Q}"
+          ssh -o StrictHostKeyChecking=no "${SSH_USER}@${SSH_HOST}" "${remote_env} bash -s" <<'EOF'
             set -euo pipefail
+            printf '%s' "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" -u "${REGISTRY_USER}" --password-stdin
             cd /opt/aiworld/server
             chmod +x ./scripts/*.sh
             ./scripts/ensure-docker-networks.sh
             docker compose -f ./ops/docker-compose.edge.yml up -d
             docker compose -f ./ops/docker-compose.observability.yml up -d
-            REGISTRY="${{ secrets.DOCKER_REGISTRY }}" IMAGE_TAG="${{ inputs.image_tag }}" ./scripts/deploy-stack.sh production
+            REGISTRY="${REGISTRY}" IMAGE_TAG="${IMAGE_TAG}" ./scripts/deploy-stack.sh production
           EOF
 
       - name: Run production readiness checks
         env:
           PRODUCTION_BASE_URL: ${{ secrets.PRODUCTION_BASE_URL }}
-        run: |
-          bash server/scripts/check-stack.sh production "${PRODUCTION_BASE_URL}"
+        run: bash server/scripts/check-stack.sh production "${PRODUCTION_BASE_URL}"
 
       - name: Verify production observability
         env:
@@ -101,7 +183,7 @@ jobs:
             ./scripts/verify-observability.sh
           EOF
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
