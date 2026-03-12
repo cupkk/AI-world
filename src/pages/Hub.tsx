@@ -1,7 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
-import { useDataStore } from "../store/dataStore";
 import { useTranslation } from "../hooks/useTranslation";
 import { Button } from "../components/ui/Button";
 import { ContentCard } from "../components/ui/ContentCard";
@@ -11,34 +10,91 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { EmptyState, ErrorState, LoadingCardGrid } from "../components/ui/StateDisplay";
 import { Plus, Search } from "lucide-react";
 import { usePageTitle } from "../lib/usePageTitle";
+import type { Content, User } from "../types";
+import { fetchHubContents, fetchUserByIdApi } from "../lib/api";
 
 export function Hub() {
   const { t } = useTranslation();
   usePageTitle(t("hub.title"));
   const { user } = useAuthStore();
-  const { contents, users } = useDataStore();
   const [searchParams] = useSearchParams();
 
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
+  const [apiContents, setApiContents] = useState<Content[]>([]);
+  const [authorsById, setAuthorsById] = useState<Record<string, User>>({});
   const [searchTerm, setSearchTerm] = useState("");
   const initialType = searchParams.get("type") || "ALL";
   const [activeTab, setActiveTab] = useState(initialType);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
 
-  // Simulate initial data loading
   useEffect(() => {
-    const timer = setTimeout(() => {
-      // Simulate possible error (very low probability in mock)
-      setIsLoading(false);
-    }, 600);
-    return () => clearTimeout(timer);
+    let active = true;
+
+    async function loadHubFromApi() {
+      setHasError(false);
+      setIsLoading(true);
+      try {
+        const result = await fetchHubContents();
+        if (!active) return;
+        setApiContents(result);
+        const authorIds = Array.from(new Set(result.map((item) => item.authorId).filter(Boolean)));
+        const authors = await Promise.all(
+          authorIds.map((authorId) => fetchUserByIdApi(authorId).catch(() => null)),
+        );
+        if (!active) return;
+        setAuthorsById(
+          authors.reduce<Record<string, User>>((acc, author) => {
+            if (author) acc[author.id] = author;
+            return acc;
+          }, {}),
+        );
+      } catch (error) {
+        if (!active) return;
+        setApiContents([]);
+        setHasError(true);
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void loadHubFromApi();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   const handleRetry = () => {
     setHasError(false);
+    setApiContents([]);
+    setAuthorsById({});
     setIsLoading(true);
-    setTimeout(() => setIsLoading(false), 600);
+    fetchHubContents()
+      .then((result) => {
+        setApiContents(result);
+        return Promise.all(
+          Array.from(new Set(result.map((item) => item.authorId).filter(Boolean))).map((authorId) =>
+            fetchUserByIdApi(authorId).catch(() => null),
+          ),
+        ).then((authors) => {
+          setAuthorsById(
+            authors.reduce<Record<string, User>>((acc, author) => {
+              if (author) acc[author.id] = author;
+              return acc;
+            }, {}),
+          );
+        });
+      })
+      .catch(() => {
+        setApiContents([]);
+        setHasError(true);
+      })
+      .finally(() => {
+        setIsLoading(false);
+      });
   };
 
   const TABS = [
@@ -53,14 +109,14 @@ export function Hub() {
   // Collect all unique tags from published content
   const allTags = useMemo(() => {
     const tags = new Set<string>();
-    contents
+    apiContents
       .filter((c) => c.status === "PUBLISHED")
       .forEach((c) => c.tags.forEach((t) => tags.add(t)));
     return Array.from(tags).sort();
-  }, [contents]);
+  }, [apiContents]);
 
   const publishedContents = useMemo(() => {
-    return contents.filter((c) => {
+    return apiContents.filter((c) => {
       // Only published
       if (c.status !== "PUBLISHED") return false;
 
@@ -95,7 +151,7 @@ export function Hub() {
 
       return true;
     });
-  }, [contents, searchTerm, activeTab, selectedTags, user?.role]);
+  }, [apiContents, searchTerm, activeTab, selectedTags, user?.role]);
 
   return (
     <div className="space-y-6">
@@ -150,7 +206,7 @@ export function Hub() {
       ) : publishedContents.length > 0 ? (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {publishedContents.map((content) => {
-            const author = users.find((u) => u.id === content.authorId);
+            const author = authorsById[content.authorId];
             return (
               <ContentCard
                 key={content.id}

@@ -1,7 +1,7 @@
-import { formatRole } from "../lib/utils";
+import { formatRole, normalizeEmailVisibility } from "../lib/utils";
 import { useParams, Link } from "react-router-dom";
+import { useState, useEffect } from "react";
 import { useAuthStore } from "../store/authStore";
-import { useDataStore } from "../store/dataStore";
 import {
   Card,
   CardContent,
@@ -15,6 +15,8 @@ import { ContactCard } from "../components/ui/ContactCard";
 import { EmptyState, LoadingSkeleton } from "../components/ui/StateDisplay";
 import { usePageTitle } from "../lib/usePageTitle";
 import { useTranslation } from "../hooks/useTranslation";
+import { fetchProfileByIdApi, fetchHubContents } from "../lib/api";
+import type { User, Content } from "../types";
 import {
   MapPin,
   Briefcase,
@@ -32,12 +34,30 @@ export function Profile() {
   usePageTitle(t("profile.title"));
   const { id } = useParams<{ id: string }>();
   const { user: currentUser } = useAuthStore();
-  const { users, contents } = useDataStore();
 
-  const user = users.find((u) => u.id === id);
-  const userContents = contents.filter(
-    (c) => c.authorId === id && c.status === "PUBLISHED",
-  );
+  const [user, setUser] = useState<User | null>(null);
+  const [userContents, setUserContents] = useState<Content[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!id) return;
+    setLoading(true);
+    Promise.all([
+      fetchProfileByIdApi(id).catch(() => null),
+      fetchHubContents().then(all => all.filter(c => c.authorId === id && c.status === "PUBLISHED")).catch(() => []),
+    ]).then(([u, contents]) => {
+      setUser(u);
+      setUserContents(contents);
+    }).finally(() => setLoading(false));
+  }, [id]);
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-4xl py-20">
+        <LoadingSkeleton />
+      </div>
+    );
+  }
 
   if (!user) {
     return (
@@ -60,6 +80,7 @@ export function Profile() {
   }
 
   const displayEmail = user.contactEmail || user.email;
+  const emailVisibility = normalizeEmailVisibility(user.privacySettings?.emailVisibility);
 
   return (
     <div className="mx-auto max-w-4xl space-y-8">
@@ -119,9 +140,9 @@ export function Profile() {
               )}
               <div className="flex items-center gap-1.5">
                 <Mail className="h-4 w-4" />
-                {user.privacySettings?.emailVisibility === "HIDDEN" ? (
+                {emailVisibility === "HIDDEN" ? (
                   <span className="italic text-zinc-600">{t("settings.vis_hidden")}</span>
-                ) : user.privacySettings?.emailVisibility === "MASKED" ? (
+                ) : emailVisibility === "MASKED" ? (
                   <span>
                     {displayEmail.charAt(0)}***@{displayEmail.split("@")[1]}
                   </span>
@@ -264,8 +285,8 @@ export function Profile() {
                         {new Date(content.createdAt).toLocaleDateString()}
                       </span>
                       <div className="flex gap-3">
-                        <span>{content.views} views</span>
-                        <span>{content.likes} likes</span>
+                        <span>{content.views} {t("common.views")}</span>
+                        <span>{content.likes} {t("common.likes")}</span>
                       </div>
                     </div>
                   </CardContent>

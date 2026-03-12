@@ -1,0 +1,13 @@
+celery[redis]==5.4.0
+redis==5.2.1
+psycopg2-binary==2.9.10
+sqlalchemy==2.0.36
+langchain==0.3.13
+langchain-community==0.3.13
+langchain-openai==0.3.0
+unstructured==0.16.11
+PyPDF2==3.0.1
+python-docx==1.1.2
+tiktoken==0.8.0
+pgvector==0.3.6
+python-dotenv==1.0.1

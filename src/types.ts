@@ -1,6 +1,20 @@
-export type Role = "EXPERT" | "LEARNER" | "ENTERPRISE_LEADER" | "ADMIN";
+import {
+  APPLICATION_STATUS_VALUES,
+  APPLICATION_TARGET_TYPE_VALUES,
+  CONTENT_STATUS_VALUES,
+  CONTENT_TYPE_VALUES,
+  CONTENT_VISIBILITY_VALUES,
+  DOCUMENT_STATUS_VALUES,
+  EMAIL_VISIBILITY_VALUES,
+  INVITE_STATUS_VALUES,
+  ROLE_VALUES,
+  THREAD_STATUS_VALUES,
+  USER_REPORT_STATUS_VALUES,
+} from "./lib/contracts";
 
-export type EmailVisibility = "FULL" | "MASKED" | "HIDDEN";
+export type Role = (typeof ROLE_VALUES)[number];
+
+export type EmailVisibility = (typeof EMAIL_VISIBILITY_VALUES)[number];
 
 export interface PrivacySettings {
   emailVisibility: EmailVisibility;
@@ -30,15 +44,23 @@ export interface User {
   whatImLookingFor?: string;
   aiStrategy?: string;
   blockedUsers?: string[];
+  // Onboarding fields
+  phone?: string;
+  phonePublic?: boolean;
+  companyName?: string;
+  taxId?: string;
+  businessScope?: string;
+  researchField?: string;
+  personalPage?: string;
+  academicTitle?: string;
+  major?: string;
+  platformIntents?: string[];
+  onboardingDone?: boolean;
 }
 
-export type ContentStatus =
-  | "DRAFT"
-  | "PENDING_REVIEW"
-  | "PUBLISHED"
-  | "REJECTED";
-export type ContentType = "CONTEST" | "PAPER" | "POLICY" | "PROJECT" | "TOOL";
-export type ContentVisibility = "ALL" | "EXPERTS_LEARNERS";
+export type ContentStatus = (typeof CONTENT_STATUS_VALUES)[number];
+export type ContentType = (typeof CONTENT_TYPE_VALUES)[number];
+export type ContentVisibility = (typeof CONTENT_VISIBILITY_VALUES)[number];
 
 export interface Content {
   id: string;
@@ -56,7 +78,7 @@ export interface Content {
   rejectReason?: string;
 }
 
-export type DocumentStatus = "PROCESSING" | "READY" | "FAILED";
+export type DocumentStatus = (typeof DOCUMENT_STATUS_VALUES)[number];
 
 export interface KnowledgeDocument {
   id: string;
@@ -65,6 +87,7 @@ export interface KnowledgeDocument {
   size: number;
   type: string;
   status: DocumentStatus;
+  errorMessage?: string;
   uploadedAt: string;
 }
 
@@ -77,7 +100,7 @@ export interface Message {
   read: boolean;
 }
 
-export type ThreadStatus = "PENDING" | "ACCEPTED" | "REJECTED";
+export type ThreadStatus = (typeof THREAD_STATUS_VALUES)[number];
 
 export interface ChatThread {
   id: string;
@@ -96,7 +119,7 @@ export interface AssistantMessage {
   recommendedContent?: Content;
 }
 
-export type InviteStatus = "UNUSED" | "USED" | "REVOKED";
+export type InviteStatus = (typeof INVITE_STATUS_VALUES)[number];
 
 export interface InviteCode {
   id: string;
@@ -109,8 +132,8 @@ export interface InviteCode {
 }
 
 // Application system for project participation
-export type ApplicationStatus = "SUBMITTED" | "ACCEPTED" | "REJECTED";
-export type ApplicationTargetType = "ENTERPRISE_NEED" | "RESEARCH_PROJECT" | "PROJECT";
+export type ApplicationStatus = (typeof APPLICATION_STATUS_VALUES)[number];
+export type ApplicationTargetType = (typeof APPLICATION_TARGET_TYPE_VALUES)[number];
 
 export interface Application {
   id: string;
@@ -132,4 +155,20 @@ export interface LearningResource {
   source: string; // e.g. "Bilibili", "Coursera", "GitHub"
   tags: string[];
   difficulty: "BEGINNER" | "INTERMEDIATE" | "ADVANCED";
+}
+
+export type UserReportStatus = (typeof USER_REPORT_STATUS_VALUES)[number];
+
+export interface UserReport {
+  id: string;
+  reporterId: string;
+  reportedUserId: string;
+  threadId?: string;
+  reason: string;
+  detail?: string;
+  status: UserReportStatus;
+  createdAt: string;
+  handledByAdminId?: string;
+  handledAt?: string;
+  adminNote?: string;
 }

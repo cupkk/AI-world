@@ -1,8 +1,7 @@
 import { formatRole } from "../../lib/utils";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useAuthStore } from "../../store/authStore";
-import { useDataStore } from "../../store/dataStore";
 import {
   Card,
   CardContent,
@@ -14,36 +13,112 @@ import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { PageHeader } from "../../components/ui/PageHeader";
-import { EmptyState } from "../../components/ui/StateDisplay";
-import { Check, X, FileText, User as UserIcon, AlertTriangle, Shield } from "lucide-react";
+import { EmptyState, LoadingSkeleton, ErrorState } from "../../components/ui/StateDisplay";
+import { Check, X, FileText, User as UserIcon, AlertTriangle, Shield, Ticket, Copy, Plus } from "lucide-react";
 import { Link } from "react-router-dom";
 import { usePageTitle } from "../../lib/usePageTitle";
+import type { Content } from "../../types";
+import {
+  approveAdminReviewByApi,
+  fetchAdminReviewQueueByApi,
+  rejectAdminReviewByApi,
+  fetchAdminReportsApi,
+  handleAdminReportApi,
+  adminGenerateInvitesByApi,
+  fetchUserByIdApi,
+  type AdminReport,
+} from "../../lib/api";
 
-import { useTranslation } from "../../lib/i18n";
+import { useTranslation } from "../../hooks/useTranslation";
+import type { User } from "../../types";
 
 export function Review() {
   const { t } = useTranslation();
   usePageTitle(t("admin_review.content_review"));
   const { user } = useAuthStore();
-  const { contents, users, updateContentStatus } = useDataStore();
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
-  
+  const [reportNotes, setReportNotes] = useState<Record<string, string>>({});
+  const [apiPendingContents, setApiPendingContents] = useState<Content[]>([]);
+  const [apiReports, setApiReports] = useState<AdminReport[]>([]);
+  const [authorsById, setAuthorsById] = useState<Record<string, User>>({});
+  const [isLoading, setIsLoading] = useState(true);
+
+  /* ── Invite code generation state ── */
+  const [inviteCount, setInviteCount] = useState(5);
+  const [inviteExpDays, setInviteExpDays] = useState(30);
+  const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
+  const [generatedExpiry, setGeneratedExpiry] = useState<string | null>(null);
+  const [inviteGenerating, setInviteGenerating] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadAdminData() {
+      setIsLoading(true);
+      try {
+        const [queue, reports] = await Promise.all([
+          fetchAdminReviewQueueByApi(),
+          fetchAdminReportsApi().catch(() => [] as AdminReport[]),
+        ]);
+        if (!active) return;
+        const pendingQueue = queue.filter((item) => item.status === "PENDING_REVIEW");
+        setApiPendingContents(pendingQueue);
+        setApiReports(reports);
+        const authors = await Promise.all(
+          Array.from(new Set(pendingQueue.map((item) => item.authorId).filter(Boolean))).map((authorId) =>
+            fetchUserByIdApi(authorId).catch(() => null),
+          ),
+        );
+        if (!active) return;
+        setAuthorsById(
+          authors.reduce<Record<string, User>>((acc, author) => {
+            if (author) acc[author.id] = author;
+            return acc;
+          }, {}),
+        );
+      } catch {
+        if (!active) return;
+        setApiPendingContents([]);
+      } finally {
+        if (active) setIsLoading(false);
+      }
+    }
+
+    void loadAdminData();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   if (!user || user.role !== "ADMIN") return null;
+  if (isLoading) return <LoadingSkeleton />;
 
-  const pendingContents = contents.filter((c) => c.status === "PENDING_REVIEW");
+  const pendingContents = apiPendingContents;
+  const pendingReports = apiReports.filter((r) => r.status === "PENDING");
 
-  const handleApprove = (id: string) => {
-    updateContentStatus(id, "PUBLISHED");
-    toast.success(t("admin_review.content_approved"));
+  const handleApprove = async (id: string) => {
+    try {
+      await approveAdminReviewByApi(id);
+      setApiPendingContents((prev) => prev.filter((item) => item.id !== id));
+      toast.success(t("admin_review.content_approved"));
+    } catch {
+      toast.error(t("api.request_failed"));
+    }
   };
 
-  const handleReject = (id: string) => {
+  const handleReject = async (id: string) => {
     if (rejectingId === id && rejectReason.trim()) {
-      updateContentStatus(id, "REJECTED", rejectReason.trim());
-      setRejectingId(null);
-      setRejectReason("");
-      toast.error(t("admin_review.content_rejected"));
+      try {
+        await rejectAdminReviewByApi(id, rejectReason.trim());
+        setApiPendingContents((prev) => prev.filter((item) => item.id !== id));
+        setRejectingId(null);
+        setRejectReason("");
+        toast.error(t("admin_review.content_rejected"));
+      } catch {
+        toast.error(t("api.request_failed"));
+      }
     } else {
       setRejectingId(id);
       setRejectReason("");
@@ -53,6 +128,48 @@ export function Review() {
   const cancelReject = () => {
     setRejectingId(null);
     setRejectReason("");
+  };
+
+  const handleGenerateInvites = async () => {
+    if (inviteCount < 1 || inviteCount > 100) {
+      toast.error(t("admin_review.invite_count_range"));
+      return;
+    }
+    setInviteGenerating(true);
+    try {
+      const result = await adminGenerateInvitesByApi({
+        count: inviteCount,
+        expiresInDays: inviteExpDays > 0 ? inviteExpDays : undefined,
+      });
+      // result may be string[] (codes) or InviteCode[]
+      const codes: string[] = result.map((item: any) => typeof item === "string" ? item : item.code);
+      setGeneratedCodes(codes);
+      // Try to extract expiry from first item or from known response shape
+      const firstItem = result[0];
+      setGeneratedExpiry(typeof firstItem === "object" && firstItem?.expiresAt ? firstItem.expiresAt : null);
+      toast.success(t("admin_review.invite_generated_ok"));
+    } catch {
+      toast.error(t("api.request_failed"));
+    } finally {
+      setInviteGenerating(false);
+    }
+  };
+
+  const copyAllCodes = () => {
+    const text = generatedCodes.join("\n");
+    navigator.clipboard.writeText(text);
+    toast.success(t("admin_review.invite_copied"));
+  };
+
+  const handleReport = async (reportId: string, status: "RESOLVED" | "DISMISSED") => {
+    try {
+      await handleAdminReportApi(reportId, status.toLowerCase() as "resolved" | "dismissed", reportNotes[reportId]?.trim() || undefined);
+      setApiReports((prev) => prev.filter((r) => r.id !== reportId));
+      setReportNotes((prev) => ({ ...prev, [reportId]: "" }));
+      toast.success(t("admin_review.report_handled"));
+    } catch {
+      toast.error(t("api.request_failed"));
+    }
   };
 
   return (
@@ -72,6 +189,92 @@ export function Review() {
         </div>
       </PageHeader>
 
+      {/* ── Invite Code Generator ── */}
+      <Card className="glass-panel border-indigo-500/20">
+        <CardHeader>
+          <CardTitle className="text-zinc-100 flex items-center gap-2">
+            <Ticket className="h-5 w-5 text-indigo-400" />
+            {t("admin_review.invite_title")}
+          </CardTitle>
+          <CardDescription className="text-zinc-400">
+            {t("admin_review.invite_desc")}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs text-zinc-400">{t("admin_review.invite_count")}</label>
+              <Input
+                type="number"
+                min={1}
+                max={100}
+                value={inviteCount}
+                onChange={(e) => setInviteCount(Number(e.target.value))}
+                className="w-24"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs text-zinc-400">{t("admin_review.invite_expire_days")}</label>
+              <Input
+                type="number"
+                min={0}
+                value={inviteExpDays}
+                onChange={(e) => setInviteExpDays(Number(e.target.value))}
+                className="w-24"
+                placeholder={t("admin_review.invite_never_expire_hint")}
+              />
+            </div>
+            <Button
+              onClick={handleGenerateInvites}
+              disabled={inviteGenerating}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white"
+            >
+              <Plus className="mr-1.5 h-4 w-4" />
+              {inviteGenerating ? t("admin_review.generating") : t("admin_review.generate_btn")}
+            </Button>
+          </div>
+
+          {generatedCodes.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-zinc-300">
+                  {generatedCodes.length} {t("admin_review.codes_generated")}
+                </span>
+                <Button variant="ghost" size="sm" onClick={copyAllCodes} className="text-indigo-400 hover:text-indigo-300">
+                  <Copy className="mr-1.5 h-3.5 w-3.5" />
+                  {t("admin_review.copy_all")}
+                </Button>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {generatedCodes.map((code, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between rounded-md border border-white/10 bg-zinc-900/60 px-3 py-2 font-mono text-sm"
+                  >
+                    <span className="text-emerald-400 select-all">{code}</span>
+                    <button
+                      type="button"
+                      className="ml-2 text-zinc-500 hover:text-zinc-300 transition-colors"
+                      onClick={() => {
+                        navigator.clipboard.writeText(code);
+                        toast.success(t("admin_review.invite_copied"));
+                      }}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+              {generatedExpiry && (
+                <p className="text-xs text-zinc-500">
+                  {t("admin_review.invite_expires_at")}: {new Date(generatedExpiry).toLocaleDateString()}
+                </p>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card className="glass-panel">
         <CardHeader>
           <CardTitle className="text-zinc-100">{t("admin_review.pending_reviews")}</CardTitle>
@@ -83,7 +286,9 @@ export function Review() {
           {pendingContents.length > 0 ? (
             <div className="space-y-4">
               {pendingContents.map((content) => {
-                const author = users.find((u) => u.id === content.authorId);
+                const author = authorsById[content.authorId];
+                const authorProfileHref = content.authorId ? `/u/${content.authorId}` : undefined;
+                const authorDisplayName = author?.name || content.title || t("hub.unknown");
                 const isRejectingThis = rejectingId === content.id;
                 return (
                   <div
@@ -114,10 +319,16 @@ export function Review() {
                         <div className="flex items-center gap-2 pt-2">
                           <div className="flex items-center gap-1.5 text-xs text-zinc-500">
                             <UserIcon className="h-3 w-3" />
-                            <Link to={`/u/${author?.id}`} className="hover:text-indigo-400 hover:underline">
-                              {author?.name}
-                            </Link>
-                            <span className="text-zinc-700">({author ? formatRole(author.role) : ""})</span>
+                            {authorProfileHref ? (
+                              <Link to={authorProfileHref} className="hover:text-indigo-400 hover:underline">
+                                {authorDisplayName}
+                              </Link>
+                            ) : (
+                              <span>{authorDisplayName}</span>
+                            )}
+                            {author ? (
+                              <span className="text-zinc-700">({formatRole(author.role)})</span>
+                            ) : null}
                           </div>
                           <span className="text-zinc-700">•</span>
                           <div className="flex flex-wrap gap-1">
@@ -140,6 +351,7 @@ export function Review() {
                         </Button>
                         <Button
                           size="sm"
+                          data-testid={`review-approve-${content.id}`}
                           className="gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_15px_rgba(16,185,129,0.3)]"
                           onClick={() => handleApprove(content.id)}
                         >
@@ -188,6 +400,84 @@ export function Review() {
               icon={<FileText className="h-8 w-8 text-zinc-500" />}
               title={t("admin_review.no_pending_title")}
               description={t("admin_review.no_pending_desc")}
+            />
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="glass-panel">
+        <CardHeader>
+          <CardTitle className="text-zinc-100">{t("admin_review.user_reports")}</CardTitle>
+          <CardDescription className="text-zinc-400">
+            {pendingReports.length} {t("admin_review.items_require_attention")}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {pendingReports.length > 0 ? (
+            <div className="space-y-4">
+              {pendingReports.map((report) => {
+                return (
+                  <div key={report.id} className="rounded-lg border border-white/10 bg-zinc-900/50 p-6 space-y-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="border-amber-500/30 text-amber-400">{t("admin_review.pending_report")}</Badge>
+                        <span className="text-xs text-zinc-500">
+                          {new Date(report.createdAt).toLocaleString()}
+                        </span>
+                      </div>
+                      {report.targetType === "user" ? (
+                        <Link to={`/messages?to=${report.targetId}`}>
+                          <Button variant="outline" size="sm">{t("admin_review.open_thread")}</Button>
+                        </Link>
+                      ) : null}
+                    </div>
+
+                    <div className="grid gap-2 text-sm md:grid-cols-2">
+                      <p className="text-zinc-300">
+                        {t("admin_review.reporter")}: <span className="text-indigo-400">{report.reporterName || t("hub.unknown")}</span>
+                      </p>
+                      <p className="text-zinc-300">
+                        {t("admin_review.reported_user")}: <span className="text-indigo-400">{report.targetType}:{report.targetId.slice(0, 8)}</span>
+                      </p>
+                    </div>
+
+                    <div className="space-y-1">
+                      <p className="text-sm text-zinc-200 font-medium">{t("admin_review.report_reason")}</p>
+                      <p className="text-sm text-zinc-400">{report.reason}</p>
+                    </div>
+
+                    <Input
+                      value={reportNotes[report.id] || ""}
+                      onChange={(e) => setReportNotes((prev) => ({ ...prev, [report.id]: e.target.value }))}
+                      placeholder={t("admin_review.reason_placeholder")}
+                    />
+
+                    <div className="flex gap-3 justify-end">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="border-zinc-600 text-zinc-300 hover:bg-zinc-700"
+                        onClick={() => handleReport(report.id, "DISMISSED")}
+                      >
+                        {t("admin_review.dismiss_report")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white"
+                        onClick={() => handleReport(report.id, "RESOLVED")}
+                      >
+                        {t("admin_review.resolve_report")}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <EmptyState
+              icon={<AlertTriangle className="h-8 w-8 text-zinc-500" />}
+              title={t("admin_review.no_pending_reports_title")}
+              description={t("admin_review.no_pending_reports_desc")}
             />
           )}
         </CardContent>

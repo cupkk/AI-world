@@ -1,22 +1,24 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { Database, Shield, User } from "lucide-react";
+import { useTranslation } from "../../hooks/useTranslation";
 
 export function SettingsLayout() {
+  const { t } = useTranslation();
   const location = useLocation();
 
   const navItems = [
     {
-      name: "Profile",
+      name: t("settings.nav_profile"),
       href: "/settings/profile",
       icon: User,
     },
     {
-      name: "Knowledge Base",
+      name: t("settings.nav_kb"),
       href: "/settings/knowledge-base",
       icon: Database,
     },
     {
-      name: "Contact & Privacy",
+      name: t("settings.nav_contact"),
       href: "/settings/contacts",
       icon: Shield,
     },

@@ -1,7 +1,6 @@
 import { Link } from "react-router-dom";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuthStore } from "../store/authStore";
-import { useDataStore } from "../store/dataStore";
 import { useTranslation } from "../hooks/useTranslation";
 import {
   Card,
@@ -14,21 +13,71 @@ import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { PageHeader } from "../components/ui/PageHeader";
-import { BookOpen, Award, Clock, BrainCircuit, Upload, Plus, Settings, FileText, Rocket, GraduationCap, ExternalLink, Trophy, Send } from "lucide-react";
+import { LoadingSkeleton, ErrorState } from "../components/ui/StateDisplay";
+import { BookOpen, Award, Clock, BrainCircuit, Upload, Plus, Settings, FileText, GraduationCap, ExternalLink, Trophy, Send } from "lucide-react";
 import { usePageTitle } from "../lib/usePageTitle";
 import { toast } from "sonner";
+import {
+  fetchMyPublishContentsByApi,
+  fetchHubContents,
+  fetchMyApplicationsByApi,
+  submitApplicationByApi,
+} from "../lib/api";
+import type { Content, Application, LearningResource } from "../types";
 
 export function DashboardLearner() {
   const { t } = useTranslation();
   usePageTitle(t("nav.dashboard"));
   const { user } = useAuthStore();
-  const { contents, learningResources, applications, submitApplication } = useDataStore();
   const [applyingTo, setApplyingTo] = useState<string | null>(null);
   const [applyMessage, setApplyMessage] = useState("");
 
-  if (!user || user.role !== "LEARNER") return null;
+  const [contents, setContents] = useState<Content[]>([]);
+  const [myContents, setMyContents] = useState<Content[]>([]);
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
+  const learningResources: LearningResource[] = contents
+    .filter((c) => c.status === "PUBLISHED" && (c.type === "PAPER" || c.type === "TOOL" || c.type === "PROJECT"))
+    .slice(0, 4)
+    .map((c) => ({
+      id: c.id,
+      title: c.title,
+      description: c.description?.slice(0, 120) || "",
+      url: `/hub/${c.type.toLowerCase()}/${c.id}`,
+      type: c.type === "PAPER" ? "TUTORIAL" as const : c.type === "TOOL" ? "COURSE" as const : "PATH" as const,
+      source: "AI-World Hub",
+      tags: c.tags ?? [],
+      difficulty: "INTERMEDIATE" as const,
+    }));
 
-  const myContents = contents.filter((c) => c.authorId === user.id);
+  const loadData = () => {
+    if (!user) return;
+    setIsLoading(true);
+    setHasError(false);
+    Promise.all([
+      fetchMyPublishContentsByApi(),
+      fetchHubContents(),
+      fetchMyApplicationsByApi(),
+    ]).then(([mine, all, apps]) => {
+      setMyContents(mine);
+      setContents(all);
+      setApplications(apps);
+    }).catch(() => {
+      setHasError(true);
+    }).finally(() => {
+      setIsLoading(false);
+    });
+  };
+
+  useEffect(() => {
+    loadData();
+  }, [user?.id]);
+
+  if (!user || user.role !== "LEARNER") return null;
+  if (hasError) return <ErrorState onRetry={loadData} />;
+  if (isLoading) return <LoadingSkeleton />;
+
   const myApplications = applications.filter((a) => a.applicantId === user.id);
   const alreadyApplied = (contentId: string) => myApplications.some(a => a.targetId === contentId);
   const recentContents = contents
@@ -38,17 +87,18 @@ export function DashboardLearner() {
     .filter((c) => c.status === "PUBLISHED" && (c.type === "PROJECT" || c.type === "CONTEST"))
     .slice(0, 4);
 
-  const handleApply = (contentId: string) => {
-    submitApplication({
-      id: `app-${Date.now()}`,
-      applicantId: user.id,
-      targetType: "PROJECT",
-      targetId: contentId,
-      message: applyMessage || undefined,
-      status: "SUBMITTED",
-      createdAt: new Date().toISOString(),
-    });
-    toast.success("Application submitted successfully!");
+  const handleApply = async (contentId: string) => {
+    try {
+      const app = await submitApplicationByApi({
+        targetType: "PROJECT",
+        targetId: contentId,
+        message: applyMessage || undefined,
+      });
+      setApplications(prev => [...prev, app]);
+      toast.success(t("dashboard.app_submitted_success"));
+    } catch (err: any) {
+      toast.error(err?.message || t("api.request_failed"));
+    }
     setApplyingTo(null);
     setApplyMessage("");
   };
@@ -161,7 +211,7 @@ export function DashboardLearner() {
                       {resource.difficulty.charAt(0) + resource.difficulty.slice(1).toLowerCase()}
                     </Badge>
                     <Badge variant="outline" className="text-[10px] border-white/10 text-zinc-500">
-                      {resource.type === "PATH" ? "Learning Path" : resource.type.charAt(0) + resource.type.slice(1).toLowerCase()}
+                      {resource.type === "PATH" ? t("dashboard.learning_path") : resource.type.charAt(0) + resource.type.slice(1).toLowerCase()}
                     </Badge>
                   </div>
                 </div>
@@ -197,7 +247,7 @@ export function DashboardLearner() {
                   </Link>
                   <div className="flex items-center gap-2 shrink-0 ml-2">
                     <Badge variant="secondary" className="text-[10px] uppercase">
-                      {content.type === "PROJECT" ? t("hub.type.project") : content.type === "ARTICLE" ? t("hub.type.article") : t("hub.type.video")}
+                      {content.type === "PROJECT" ? t("hub.type.project") : content.type}
                     </Badge>
                     {alreadyApplied(content.id) ? (
                       <Badge variant="outline" className="text-[10px] border-emerald-500/30 text-emerald-400">{t("hub.applied")}</Badge>

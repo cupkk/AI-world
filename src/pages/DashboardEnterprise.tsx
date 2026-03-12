@@ -1,6 +1,5 @@
 import { useAuthStore } from "../store/authStore";
-import { useDataStore } from "../store/dataStore";
-import { useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import {
   Card,
   CardContent,
@@ -13,18 +12,48 @@ import { Users, FileText, MessageSquare, BrainCircuit, Upload, Plus, Settings, I
 import { Link } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { PageHeader } from "../components/ui/PageHeader";
+import { LoadingSkeleton, ErrorState } from "../components/ui/StateDisplay";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { Avatar } from "../components/ui/Avatar";
 import { formatRole } from "../lib/utils";
 import { toast } from "sonner";
 import { usePageTitle } from "../lib/usePageTitle";
 import { useTranslation } from "../hooks/useTranslation";
+import { detectRecruitmentKeywords } from "../lib/recruitment";
+import {
+  fetchEnterpriseProfileByApi,
+  fetchMyPublishContentsByApi,
+  fetchTalentUsers,
+  fetchMyApplicationsByApi,
+  fetchMessageConversationsByApi,
+  updateApplicationStatusByApi,
+  createPublishDraftByApi,
+  submitPublishByApi,
+  updateEnterpriseProfileByApi,
+} from "../lib/api";
+import type { Content, Application, User as UserType, ChatThread } from "../types";
+
+function mergeDefinedFields<T extends object>(base: T, patch: Partial<T>): T {
+  const next = { ...base } as Record<string, unknown>;
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== undefined) {
+      next[key] = value;
+    }
+  }
+  return next as T;
+}
 
 export function DashboardEnterprise() {
-  usePageTitle("Dashboard");
   const { t } = useTranslation();
-  const { user, login } = useAuthStore();
-  const { users, contents, chatThreads, applications, updateApplicationStatus, addContent, updateUserProfile } = useDataStore();
+  usePageTitle(t("page.dashboard"));
+  const { user, updateUser } = useAuthStore();
+
+  const [users, setUsers] = useState<UserType[]>([]);
+  const [contents, setContents] = useState<Content[]>([]);
+  const [chatThreads, setChatThreads] = useState<ChatThread[]>([]);
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
 
   // Inline AI Strategy editing
   const [editingStrategy, setEditingStrategy] = useState(false);
@@ -36,7 +65,41 @@ export function DashboardEnterprise() {
   const [needDesc, setNeedDesc] = useState("");
   const [needTags, setNeedTags] = useState("");
 
+  const detectedNeedKeywords = useMemo(() => {
+    const text = `${needTitle} ${needDesc} ${needTags}`;
+    return detectRecruitmentKeywords(text);
+  }, [needTitle, needDesc, needTags]);
+
+  const loadData = () => {
+    if (!user) return;
+    setIsLoading(true);
+    setHasError(false);
+    Promise.all([
+      fetchEnterpriseProfileByApi(),
+      fetchTalentUsers(),
+      fetchMyPublishContentsByApi(),
+      fetchMessageConversationsByApi(user.id, []),
+      fetchMyApplicationsByApi(),
+    ]).then(([enterpriseProfile, talent, mine, threads, apps]) => {
+      updateUser(mergeDefinedFields(user, enterpriseProfile));
+      setUsers(talent);
+      setContents(mine);
+      setChatThreads(threads);
+      setApplications(apps);
+    }).catch(() => {
+      setHasError(true);
+    }).finally(() => {
+      setIsLoading(false);
+    });
+  };
+
+  useEffect(() => {
+    loadData();
+  }, [user?.id]);
+
   if (!user || user.role !== "ENTERPRISE_LEADER") return null;
+  if (hasError) return <ErrorState onRetry={loadData} />;
+  if (isLoading) return <LoadingSkeleton />;
 
   const experts = users.filter((u) => u.role === "EXPERT").slice(0, 4);
   const myContents = contents.filter((c) => c.authorId === user.id);
@@ -129,7 +192,8 @@ export function DashboardEnterprise() {
         <Card className="glass-panel border-indigo-500/30 shadow-[0_0_30px_rgba(79,70,229,0.1)]">
           <CardHeader className="flex flex-row items-center justify-between">
             <CardTitle className="text-zinc-100 flex items-center gap-2">
-              <span className="text-indigo-400">🚀</span> {t("dashboard.ai_strategy_showcase")}
+              <BrainCircuit className="h-4 w-4 text-indigo-400" />
+              {t("dashboard.ai_strategy_showcase")}
             </CardTitle>
             {!editingStrategy && (
               <Button variant="ghost" size="sm" className="gap-1 text-zinc-400 hover:text-zinc-100"
@@ -144,7 +208,8 @@ export function DashboardEnterprise() {
                 <div className="space-y-2">
                   <label className="text-xs font-medium text-zinc-300">{t("dashboard.our_ai_strategy")}</label>
                   <textarea
-                    className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 min-h-[80px] resize-y"
+                    data-testid="enterprise-ai-strategy-input"
+                    className="custom-scrollbar w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 min-h-[80px] resize-y"
                     value={strategyDraft.aiStrategy}
                     onChange={(e) => setStrategyDraft(prev => ({ ...prev, aiStrategy: e.target.value }))}
                     placeholder={t("dashboard.desc_ai_strategy")}
@@ -153,7 +218,8 @@ export function DashboardEnterprise() {
                 <div className="space-y-2">
                   <label className="text-xs font-medium text-zinc-300">{t("dashboard.current_focus")}</label>
                   <textarea
-                    className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 min-h-[60px] resize-y"
+                    data-testid="enterprise-current-focus-input"
+                    className="custom-scrollbar w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 min-h-[60px] resize-y"
                     value={strategyDraft.whatImDoing}
                     onChange={(e) => setStrategyDraft(prev => ({ ...prev, whatImDoing: e.target.value }))}
                     placeholder={t("dashboard.desc_current_focus")}
@@ -162,7 +228,8 @@ export function DashboardEnterprise() {
                 <div className="space-y-2">
                   <label className="text-xs font-medium text-zinc-300">{t("dashboard.looking_for")}</label>
                   <textarea
-                    className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 min-h-[60px] resize-y"
+                    data-testid="enterprise-looking-for-input"
+                    className="custom-scrollbar w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 min-h-[60px] resize-y"
                     value={strategyDraft.whatImLookingFor}
                     onChange={(e) => setStrategyDraft(prev => ({ ...prev, whatImLookingFor: e.target.value }))}
                     placeholder={t("dashboard.desc_looking_for")}
@@ -172,12 +239,23 @@ export function DashboardEnterprise() {
                   <Button variant="ghost" size="sm" className="gap-1" onClick={() => setEditingStrategy(false)}>
                     <X className="h-3.5 w-3.5" /> {t("dashboard.cancel")}
                   </Button>
-                  <Button size="sm" className="gap-1 bg-indigo-600 hover:bg-indigo-500 text-white" onClick={() => {
-                    updateUserProfile(user.id, strategyDraft);
-                    login({ ...user, ...strategyDraft });
-                    setEditingStrategy(false);
-                    // toast needs to be translated too? toast.success isn't fully set up for i18n safely but we can inject t()
-                    toast.success(t("dashboard.strategy_updated"));
+                  <Button
+                    data-testid="enterprise-save-strategy-btn"
+                    size="sm"
+                    className="gap-1 bg-indigo-600 hover:bg-indigo-500 text-white"
+                    onClick={async () => {
+                    try {
+                      const nextProfile = await updateEnterpriseProfileByApi({
+                        aiStrategy: strategyDraft.aiStrategy,
+                        currentFocus: strategyDraft.whatImDoing,
+                        lookingFor: strategyDraft.whatImLookingFor,
+                      });
+                      updateUser(mergeDefinedFields(user, nextProfile));
+                      setEditingStrategy(false);
+                      toast.success(t("dashboard.strategy_updated"));
+                    } catch {
+                      toast.error(t("api.request_failed"));
+                    }
                   }}>
                     <Save className="h-3.5 w-3.5" /> {t("dashboard.save")}
                   </Button>
@@ -201,14 +279,14 @@ export function DashboardEnterprise() {
 
                 {user.whatImDoing && (
                   <div className="space-y-2">
-                    <h3 className="text-sm font-medium text-zinc-300">Current Focus</h3>
+                    <h3 className="text-sm font-medium text-zinc-300">{t("dashboard.current_focus")}</h3>
                     <p className="text-sm text-zinc-400 leading-relaxed">{user.whatImDoing}</p>
                   </div>
                 )}
 
                 {user.whatImLookingFor && (
                   <div className="space-y-2">
-                    <h3 className="text-sm font-medium text-zinc-300">Looking For</h3>
+                    <h3 className="text-sm font-medium text-zinc-300">{t("dashboard.looking_for")}</h3>
                     <p className="text-sm text-zinc-400 leading-relaxed">{user.whatImLookingFor}</p>
                   </div>
                 )}
@@ -250,11 +328,11 @@ export function DashboardEnterprise() {
                   {app.status === "SUBMITTED" && (
                     <div className="flex gap-2 ml-11">
                       <Button size="sm" variant="outline" className="h-7 text-xs gap-1 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
-                        onClick={() => { updateApplicationStatus(app.id, "ACCEPTED"); toast.success("Application accepted"); }}>
+                        onClick={async () => { try { await updateApplicationStatusByApi(app.id, "accepted"); setApplications(prev => prev.map(a => a.id === app.id ? { ...a, status: "ACCEPTED" } : a)); toast.success(t("dashboard.app_accepted")); } catch { toast.error(t("api.request_failed")); } }}>
                         <CheckCircle className="h-3 w-3" /> {t("dashboard.approve")}
                       </Button>
                       <Button size="sm" variant="outline" className="h-7 text-xs gap-1 border-red-500/30 text-red-400 hover:bg-red-500/10"
-                        onClick={() => { updateApplicationStatus(app.id, "REJECTED"); toast.error("Application rejected"); }}>
+                        onClick={async () => { try { await updateApplicationStatusByApi(app.id, "rejected"); setApplications(prev => prev.map(a => a.id === app.id ? { ...a, status: "REJECTED" } : a)); toast.error(t("dashboard.app_rejected")); } catch { toast.error(t("api.request_failed")); } }}>
                         <XCircle className="h-3 w-3" /> {t("dashboard.decline")}
                       </Button>
                       <Link to={`/messages?to=${applicant.id}`}>
@@ -292,6 +370,14 @@ export function DashboardEnterprise() {
             {showPostForm && (
               <div className="rounded-lg border border-indigo-500/20 bg-indigo-500/5 p-4 space-y-3">
                 <h4 className="text-sm font-medium text-zinc-200">{t("dashboard.quick_post_project")}</h4>
+                {detectedNeedKeywords.length > 0 && (
+                  <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                    <p className="font-medium">{t("publish.recruitment_warning")}</p>
+                    <p className="mt-1">
+                      {t("publish.recruitment_warning_desc")} <strong>{detectedNeedKeywords.join(", ")}</strong>. {t("publish.recruitment_warning_desc_2")}
+                    </p>
+                  </div>
+                )}
                 <Input
                   placeholder={t("dashboard.post_title_pl")}
                   value={needTitle}
@@ -312,24 +398,28 @@ export function DashboardEnterprise() {
                 />
                 <div className="flex gap-2 justify-end">
                   <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={() => { setShowPostForm(false); setNeedTitle(""); setNeedDesc(""); setNeedTags(""); }}>{t("dashboard.cancel")}</Button>
-                  <Button size="sm" className="h-8 text-xs bg-indigo-600 hover:bg-indigo-500 text-white" disabled={!needTitle.trim() || !needDesc.trim()}
-                    onClick={() => {
-                      addContent({
-                        id: `c-${Date.now()}`,
-                        title: needTitle,
-                        description: needDesc,
-                        type: "PROJECT",
-                        status: "PENDING_REVIEW",
-                        authorId: user.id,
-                        createdAt: new Date().toISOString(),
-                        tags: needTags.split(",").map(t => t.trim()).filter(Boolean),
-                        likes: 0,
-                        views: 0,
-                        visibility: "ALL",
-                      });
-                      setShowPostForm(false);
-                      setNeedTitle(""); setNeedDesc(""); setNeedTags("");
-                      toast.success(t("dashboard.toast_project_submitted"));
+                  <Button size="sm" className="h-8 text-xs bg-indigo-600 hover:bg-indigo-500 text-white" disabled={!needTitle.trim() || !needDesc.trim() || detectedNeedKeywords.length > 0}
+                    onClick={async () => {
+                      if (detectedNeedKeywords.length > 0) {
+                        toast.error(t("publish.recruitment_warning"));
+                        return;
+                      }
+                      try {
+                        const draft = await createPublishDraftByApi({
+                          title: needTitle,
+                          description: needDesc,
+                          type: "PROJECT",
+                          tags: needTags.split(",").map(t => t.trim()).filter(Boolean),
+                          visibility: "ALL",
+                        });
+                        await submitPublishByApi(draft.id);
+                        setContents(prev => [...prev, { ...draft, status: "PENDING_REVIEW" }]);
+                        setShowPostForm(false);
+                        setNeedTitle(""); setNeedDesc(""); setNeedTags("");
+                        toast.success(t("dashboard.toast_project_submitted"));
+                      } catch (err: any) {
+                        toast.error(err?.message || t("api.request_failed"));
+                      }
                     }}>
                     {t("dashboard.submit_review")}
                   </Button>
@@ -380,13 +470,11 @@ export function DashboardEnterprise() {
                 className="flex items-center justify-between border-b border-white/10 pb-4 last:border-0 last:pb-0"
               >
                 <div className="flex items-center gap-4">
-                  <div className="h-10 w-10 overflow-hidden rounded-full bg-zinc-800 border border-white/10">
-                    <img
-                      src={expert.avatar}
-                      alt={expert.name}
-                      className="h-full w-full object-cover"
-                    />
-                  </div>
+                  <Avatar
+                    src={expert.avatar}
+                    fallback={expert.name.charAt(0)}
+                    className="h-10 w-10"
+                  />
                   <div>
                     <p className="font-medium text-zinc-100">{expert.name}</p>
                     <p className="text-xs text-zinc-400">{expert.title}</p>

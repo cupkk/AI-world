@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  frontend-checks:
+    name: Frontend Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build
+
+  frontend-e2e:
+    name: Frontend Mocked E2E
+    runs-on: ubuntu-latest
+    needs: frontend-checks
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test --project=chromium
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  backend-build:
+    name: Backend Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx eslint "{src,test}/**/*.ts"
+      - run: npm run build
+
+  backend-unit-tests:
+    name: Backend Unit Tests
+    runs-on: ubuntu-latest
+    needs: backend-build
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: aiworld
+          POSTGRES_PASSWORD: aiworld_dev
+          POSTGRES_DB: aiworld
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U aiworld"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+    env:
+      DATABASE_URL: postgresql://aiworld:aiworld_dev@localhost:5432/aiworld?schema=public
+      REDIS_URL: redis://localhost:6379
+      NODE_ENV: test
+      SESSION_SECRET: ci-test-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npx prisma migrate deploy
+      - run: npx jest --coverage --coverageReporters=text --coverageReporters=json-summary --runInBand
+      - name: Check coverage threshold
+        run: |
+          node -e "
+            const r = require('./coverage/coverage-summary.json');
+            const s = r.total.statements.pct;
+            console.log('Statement coverage: ' + s + '%');
+            if (s < 40) { console.error('Coverage below 40% threshold'); process.exit(1); }
+          "
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-coverage
+          path: server/coverage/
+          retention-days: 7
+
+  docker-build-check:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    needs: [frontend-e2e, backend-unit-tests]
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t aiworld-api:ci --target production ./server
+      - name: Build frontend image
+        run: >
+          docker build -t aiworld-web:ci
+          --build-arg VITE_ENABLE_DEMO_MODE=false
+          --build-arg VITE_ALLOW_DEMO_PREFILL=false
+          -f Dockerfile .
+      - name: Build worker image
+        run: docker build -t aiworld-worker:ci ./worker

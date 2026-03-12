@@ -1,0 +1,41 @@
+groups:
+  - name: aiworld-api-alerts
+    rules:
+      - alert: AIWorldApiDown
+        expr: up{job="aiworld-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "AI-World API is down"
+          description: "Prometheus cannot scrape AI-World API for more than 1 minute."
+
+      - alert: AIWorldHigh5xxRate
+        expr: |
+          sum(rate(aiworld_http_requests_total{status_code=~"5.."}[5m]))
+            /
+          sum(rate(aiworld_http_requests_total[5m])) > 0.03
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High 5xx rate"
+          description: "5xx ratio is above 3% in the last 5 minutes."
+
+      - alert: AIWorldP95LatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(aiworld_http_request_duration_ms_bucket[5m])) by (le)) > 800
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P95 latency too high"
+          description: "P95 HTTP latency is above 800ms for 5 minutes."
+
+      - alert: AIWorldUnhandledExceptionsSpike
+        expr: increase(aiworld_unhandled_exceptions_total[5m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unhandled exceptions spiking"
+          description: "Unhandled exceptions increased by more than 10 in 5 minutes."

@@ -1,5 +1,7 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import type { EmailVisibility } from "../types";
+import { normalizeEmailVisibilityValue } from "./contracts";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -23,4 +25,8 @@ export function formatStatus(status: string): string {
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase())
     .replace(/\B\w+/g, (w) => w.toLowerCase());
+}
+
+export function normalizeEmailVisibility(value: unknown): EmailVisibility {
+  return normalizeEmailVisibilityValue(value);
 }

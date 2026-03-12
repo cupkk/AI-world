@@ -1,0 +1,38 @@
+version: '3.9'
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: aiworld-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert.rules.yml:/etc/prometheus/alert.rules.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=15d'
+    ports:
+      - '127.0.0.1:9090:9090'
+    depends_on:
+      - alertmanager
+    networks:
+      - default
+      - observability
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.0
+    container_name: aiworld-alertmanager
+    restart: unless-stopped
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+    ports:
+      - '127.0.0.1:9093:9093'
+    networks:
+      - default
+
+networks:
+  observability:
+    external: true
+    name: aiworld-observability

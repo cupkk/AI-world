@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "./Car
 import { Badge } from "./Badge";
 import { formatDistanceToNow } from "date-fns";
 import type { Content, User } from "../../types";
+import { useTranslation } from "../../hooks/useTranslation";
 
 interface ContentCardProps {
   content: Content;
@@ -10,6 +11,7 @@ interface ContentCardProps {
 }
 
 export function ContentCard({ content, author }: ContentCardProps) {
+  const { t } = useTranslation();
   return (
     <Link to={`/hub/${content.type.toLowerCase()}/${content.id}`}>
       <Card className="flex flex-col overflow-hidden transition-all hover:shadow-[0_0_20px_rgba(79,70,229,0.15)] hover:border-indigo-500/30 group glass-panel h-full">
@@ -73,8 +75,8 @@ export function ContentCard({ content, author }: ContentCardProps) {
               </div>
             )}
             <div className="flex items-center gap-3 text-xs text-zinc-500">
-              <span>{content.views} views</span>
-              <span>{content.likes} likes</span>
+              <span>{content.views} {t("common.views")}</span>
+              <span>{content.likes} {t("common.likes")}</span>
             </div>
           </div>
         </CardContent>

@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
 import { useAuthStore } from "../../store/authStore";
-import { useDataStore } from "../../store/dataStore";
 import {
   Card,
   CardContent,
@@ -16,32 +15,38 @@ import { EmailVisibility } from "../../types";
 import { Mail, Eye, EyeOff, ShieldAlert } from "lucide-react";
 import { usePageTitle } from "../../lib/usePageTitle";
 import { useTranslation } from "../../hooks/useTranslation";
+import { updateProfileByApi } from "../../lib/api";
+import { normalizeEmailVisibility } from "../../lib/utils";
 
 export function Contacts() {
   const { t } = useTranslation();
   usePageTitle(t("settings.contact_title"));
   const { user, login } = useAuthStore();
-  const { updatePrivacySettings, updateUserProfile } = useDataStore();
   
   const [visibility, setVisibility] = useState<EmailVisibility>(
-    user?.privacySettings?.emailVisibility || "MASKED"
+    user?.privacySettings?.emailVisibility
+      ? normalizeEmailVisibility(user.privacySettings.emailVisibility)
+      : "MASKED"
   );
   const [contactEmail, setContactEmail] = useState(user?.contactEmail || "");
   const [isSaving, setIsSaving] = useState(false);
 
   if (!user) return null;
 
-  const handleSave = () => {
+  const handleSave = async () => {
     setIsSaving(true);
-    updatePrivacySettings(user.id, { emailVisibility: visibility });
-    if (contactEmail !== (user.contactEmail || "")) {
-      updateUserProfile(user.id, { contactEmail: contactEmail || undefined });
-      login({ ...user, contactEmail: contactEmail || undefined, privacySettings: { emailVisibility: visibility } });
-    }
-    setTimeout(() => {
+    try {
+      const updatedUser = await updateProfileByApi({
+        contactEmail: contactEmail || undefined,
+        emailVisibility: visibility,
+      });
+      login(updatedUser);
+      toast.success(t("settings.privacy_updated"));
+    } catch (err: any) {
+      toast.error(err?.message || t("api.request_failed"));
+    } finally {
       setIsSaving(false);
-      toast.success("Privacy settings updated successfully");
-    }, 500);
+    }
   };
 
   return (
@@ -77,10 +82,10 @@ export function Contacts() {
               type="email"
               value={contactEmail}
               onChange={(e: React.ChangeEvent<HTMLInputElement>) => setContactEmail(e.target.value)}
-              placeholder="your-contact@email.com"
+              placeholder={t("settings.contact_email_pl")}
             />
             <p className="text-xs text-zinc-500 mt-1">
-              Leave blank to use your login email for contact purposes.
+              {t("settings.contact_email_hint")}
             </p>
           </div>
         </CardContent>
@@ -98,14 +103,14 @@ export function Contacts() {
           <div className="space-y-4">
             <label
               className={`flex cursor-pointer items-start gap-4 rounded-lg border p-4 transition-colors ${
-                visibility === "FULL"
+                visibility === "PUBLIC"
                   ? "border-indigo-500 bg-indigo-500/10"
                   : "border-white/10 bg-zinc-900/50 hover:bg-zinc-800/50"
               }`}
-              onClick={() => setVisibility("FULL")}
+              onClick={() => setVisibility("PUBLIC")}
             >
               <div className="mt-1 flex h-5 w-5 items-center justify-center rounded-full border border-zinc-500">
-                {visibility === "FULL" && (
+                {visibility === "PUBLIC" && (
                   <div className="h-2.5 w-2.5 rounded-full bg-indigo-500" />
                 )}
               </div>
@@ -171,7 +176,7 @@ export function Contacts() {
 
           <div className="flex justify-end pt-4">
             <Button onClick={handleSave} disabled={isSaving}>
-              {isSaving ? "Saving..." : t("settings.save_prefs")}
+              {isSaving ? t("settings.saving") : t("settings.save_prefs")}
             </Button>
           </div>
         </CardContent>

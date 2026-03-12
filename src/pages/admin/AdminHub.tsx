@@ -1,38 +1,40 @@
-import { formatRole, formatStatus } from "../../lib/utils";
-import { useState } from "react";
-import { useDataStore } from "../../store/dataStore";
+import { formatStatus } from "../../lib/utils";
+import { useState, useEffect } from "react";
 import {
   Card,
   CardContent,
-  CardHeader,
-  CardTitle,
 } from "../../components/ui/Card";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Input } from "../../components/ui/Input";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { PageHeader } from "../../components/ui/PageHeader";
-import { EmptyState } from "../../components/ui/StateDisplay";
+import { EmptyState, LoadingSkeleton, ErrorState } from "../../components/ui/StateDisplay";
 import { SearchBar } from "../../components/ui/SearchBar";
-import { TagFilter } from "../../components/ui/TagFilter";
+
 import {
   Eye,
   Heart,
   Calendar,
   User,
   Shield,
-  Filter,
   LayoutGrid,
   List,
   Pencil,
   Check,
   X,
 } from "lucide-react";
-import { useTranslation } from "../../lib/i18n";
+import { useTranslation } from "../../hooks/useTranslation";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
-import type { ContentStatus, ContentType } from "../../types";
+import type { Content, ContentStatus, ContentType, User as UserType } from "../../types";
 import { usePageTitle } from "../../lib/usePageTitle";
+import {
+  fetchHubContents,
+  fetchTalentUsers,
+  approveAdminReviewByApi,
+  rejectAdminReviewByApi,
+} from "../../lib/api";
 
 const STATUS_OPTIONS: ContentStatus[] = [
   "PUBLISHED",
@@ -50,8 +52,32 @@ const TYPE_OPTIONS: ContentType[] = [
 
 export function AdminHub() {
   const { t } = useTranslation();
-  usePageTitle(t("admin_hub.content_management") || "Content Management");
-  const { contents, users, updateContentStatus, updateContent } = useDataStore();
+  usePageTitle(t("admin_hub.content_management"));
+
+  const [contents, setContents] = useState<Content[]>([]);
+  const [users, setUsers] = useState<UserType[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
+
+  const loadData = () => {
+    setIsLoading(true);
+    setHasError(false);
+    Promise.all([
+      fetchHubContents(),
+      fetchTalentUsers(),
+    ]).then(([c, u]) => {
+      setContents(c);
+      setUsers(u);
+    }).catch(() => {
+      setHasError(true);
+    }).finally(() => {
+      setIsLoading(false);
+    });
+  };
+
+  useEffect(() => {
+    loadData();
+  }, []);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<ContentStatus | "ALL">("ALL");
@@ -75,29 +101,44 @@ export function AdminHub() {
   });
 
   const getAuthorName = (authorId: string) => {
-    return users.find((u) => u.id === authorId)?.name || "Unknown";
+    return users.find((u) => u.id === authorId)?.name || t("hub.unknown");
   };
 
-  const handleStatusChange = (
+  const handleStatusChange = async (
     contentId: string,
     newStatus: ContentStatus
   ) => {
-    updateContentStatus(contentId, newStatus);
-    toast.success(`${t("admin_hub.status_updated")} ${formatStatus(newStatus)}`);
+    try {
+      if (newStatus === "PUBLISHED") {
+        await approveAdminReviewByApi(contentId);
+      }
+      setContents(prev => prev.map(c => c.id === contentId ? { ...c, status: newStatus } : c));
+      toast.success(`${t("admin_hub.status_updated")} ${formatStatus(newStatus)}`);
+    } catch (err: any) {
+      toast.error(err?.message || t("api.request_failed"));
+    }
   };
 
-  const handleRejectWithReason = (contentId: string) => {
-    updateContentStatus(contentId, "REJECTED", rejectReason || undefined);
-    toast.success(`${t("admin_hub.content_rejected")}`);
+  const handleRejectWithReason = async (contentId: string) => {
+    try {
+      await rejectAdminReviewByApi(contentId, rejectReason || t("admin_hub.no_reason"));
+      setContents(prev => prev.map(c => c.id === contentId ? { ...c, status: "REJECTED", rejectReason: rejectReason || undefined } : c));
+      toast.success(`${t("admin_hub.content_rejected")}`);
+    } catch (err: any) {
+      toast.error(err?.message || t("api.request_failed"));
+    }
     setRejectingId(null);
     setRejectReason("");
   };
 
   const handleSaveEdit = (contentId: string) => {
-    updateContent(contentId, { title: editTitle, description: editDesc });
-    toast.success(t("admin_hub.content_updated") || "Content updated");
+    setContents(prev => prev.map(c => c.id === contentId ? { ...c, title: editTitle, description: editDesc } : c));
+    toast.success(t("admin_hub.content_updated"));
     setEditingId(null);
   };
+
+  if (hasError) return <ErrorState onRetry={loadData} />;
+  if (isLoading) return <LoadingSkeleton />;
 
   return (
     <div className="space-y-6">
@@ -155,9 +196,9 @@ export function AdminHub() {
             className="rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-300 focus:border-indigo-500 focus:outline-none"
           >
             <option value="ALL">{t("admin_hub.all_types")}</option>
-            {TYPE_OPTIONS.map((t) => (
-              <option key={t} value={t}>
-                {t}
+            {TYPE_OPTIONS.map((typeOption) => (
+              <option key={typeOption} value={typeOption}>
+                {typeOption}
               </option>
             ))}
           </select>
@@ -191,8 +232,8 @@ export function AdminHub() {
       {/* Content List */}
       {filteredContents.length === 0 ? (
         <EmptyState
-          title="No Content Found"
-          description="No content matches your current filters."
+          title={t("admin_hub.no_content_found")}
+          description={t("admin_hub.no_content_filter")}
         />
       ) : viewMode === "list" ? (
         <div className="space-y-3">
@@ -213,7 +254,7 @@ export function AdminHub() {
                     <Badge variant="secondary" className="text-[10px] uppercase">{content.type}</Badge>
                     <StatusBadge status={content.status} />
                     {content.rejectReason && (
-                      <span className="text-[10px] text-red-400 italic">Reason: {content.rejectReason}</span>
+                      <span className="text-[10px] text-red-400 italic">{t("admin_hub.reason_label")} {content.rejectReason}</span>
                     )}
                   </div>
                   {editingId === content.id ? (
@@ -230,9 +271,9 @@ export function AdminHub() {
                       />
                       <div className="flex gap-1">
                         <Button size="sm" variant="outline" className="h-6 text-[10px] gap-1 text-emerald-400 border-emerald-500/30" onClick={() => handleSaveEdit(content.id)}>
-                          <Check className="h-2.5 w-2.5" /> Save
+                          <Check className="h-2.5 w-2.5" /> {t("admin_hub.save")}
                         </Button>
-                        <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => setEditingId(null)}>Cancel</Button>
+                        <Button size="sm" variant="ghost" className="h-6 text-[10px]" onClick={() => setEditingId(null)}>{t("common.cancel")}</Button>
                       </div>
                     </div>
                   ) : (
@@ -267,7 +308,7 @@ export function AdminHub() {
                           className="text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10"
                           onClick={() => handleStatusChange(content.id, "PUBLISHED")}
                         >
-                          Approve
+                          {t("admin_hub.approve")}
                         </Button>
                         <Button
                           size="sm"
@@ -275,7 +316,7 @@ export function AdminHub() {
                           className="text-red-400 border-red-500/30 hover:bg-red-500/10"
                           onClick={() => setRejectingId(rejectingId === content.id ? null : content.id)}
                         >
-                          Reject
+                          {t("admin_hub.reject")}
                         </Button>
                       </>
                     )}
@@ -286,7 +327,7 @@ export function AdminHub() {
                         className="text-amber-400 border-amber-500/30 hover:bg-amber-500/10"
                         onClick={() => handleStatusChange(content.id, "DRAFT")}
                       >
-                        Unpublish
+                        {t("admin_hub.unpublish")}
                       </Button>
                     )}
                   </div>
@@ -294,14 +335,14 @@ export function AdminHub() {
                   {rejectingId === content.id && (
                     <div className="flex items-center gap-2 w-full">
                       <Input
-                        placeholder="Rejection reason (optional)..."
+                        placeholder={t("admin_hub.reject_reason_optional")}
                         value={rejectReason}
                         onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRejectReason(e.target.value)}
                         className="h-7 text-xs flex-1"
                         autoFocus
                       />
                       <Button size="sm" variant="outline" className="h-7 text-xs border-red-500/30 text-red-400 hover:bg-red-500/10" onClick={() => handleRejectWithReason(content.id)}>
-                        Confirm
+                        {t("admin_hub.confirm")}
                       </Button>
                       <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setRejectingId(null); setRejectReason(""); }}>
                         <X className="h-3 w-3" />
@@ -340,7 +381,7 @@ export function AdminHub() {
                   {content.title}
                 </p>
                 <p className="text-xs text-zinc-500">
-                  by {getAuthorName(content.authorId)}
+                  {t("admin_hub.by")} {getAuthorName(content.authorId)}
                 </p>
                 <div className="flex items-center gap-2 pt-2 border-t border-white/5">
                   {content.status === "PENDING_REVIEW" && (
@@ -351,7 +392,7 @@ export function AdminHub() {
                         className="flex-1 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/10"
                         onClick={() => handleStatusChange(content.id, "PUBLISHED")}
                       >
-                        Approve
+                        {t("admin_hub.approve")}
                       </Button>
                       <Button
                         size="sm"
@@ -359,7 +400,7 @@ export function AdminHub() {
                         className="flex-1 text-red-400 border-red-500/30 hover:bg-red-500/10"
                         onClick={() => setRejectingId(rejectingId === content.id ? null : content.id)}
                       >
-                        Reject
+                        {t("admin_hub.reject")}
                       </Button>
                     </>
                   )}
@@ -370,19 +411,19 @@ export function AdminHub() {
                       className="w-full text-amber-400 border-amber-500/30 hover:bg-amber-500/10"
                       onClick={() => handleStatusChange(content.id, "DRAFT")}
                     >
-                      Unpublish
+                      {t("admin_hub.unpublish")}
                     </Button>
                   )}
                 </div>
                 {rejectingId === content.id && (
                   <div className="flex items-center gap-2 pt-2">
                     <Input
-                      placeholder="Reason..."
+                      placeholder={t("admin_hub.reason_short")}
                       value={rejectReason}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRejectReason(e.target.value)}
                       className="h-7 text-xs flex-1"
                     />
-                    <Button size="sm" variant="outline" className="h-7 text-xs border-red-500/30 text-red-400" onClick={() => handleRejectWithReason(content.id)}>OK</Button>
+                    <Button size="sm" variant="outline" className="h-7 text-xs border-red-500/30 text-red-400" onClick={() => handleRejectWithReason(content.id)}>{t("admin_hub.confirm")}</Button>
                   </div>
                 )}
               </CardContent>

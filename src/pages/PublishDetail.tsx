@@ -1,7 +1,6 @@
 import { useParams, useNavigate, Link } from "react-router-dom";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuthStore } from "../store/authStore";
-import { useDataStore } from "../store/dataStore";
 import {
   Card,
   CardContent,
@@ -12,50 +11,77 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { StatusBadge } from "../components/ui/StatusBadge";
-import { EmptyState } from "../components/ui/StateDisplay";
+import { EmptyState, LoadingSkeleton } from "../components/ui/StateDisplay";
 import {
   ArrowLeft,
-  Calendar,
   Eye,
   Heart,
   Edit3,
-  Trash2,
   Send,
   AlertTriangle,
   Tag,
+  Loader2,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { enUS, zhCN } from "date-fns/locale";
 import { toast } from "sonner";
-import type { ContentStatus, ContentType } from "../types";
+import type { Content, ContentType } from "../types";
 import { usePageTitle } from "../lib/usePageTitle";
-import { useTranslation } from "../lib/i18n";
+import { useTranslation } from "../hooks/useTranslation";
+import { submitPublishByApi, fetchHubContentByIdApi, updatePublishContentByApi } from "../lib/api";
 
 export function PublishDetail() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   usePageTitle(t("pub_detail.edit_content"));
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const { contents, updateContent, updateContentStatus } = useDataStore();
 
-  const content = contents.find((c) => c.id === id);
+  const [content, setContent] = useState<Content | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const [isEditing, setIsEditing] = useState(false);
-  const [editTitle, setEditTitle] = useState(content?.title || "");
-  const [editDescription, setEditDescription] = useState(
-    content?.description || ""
-  );
-  const [editTags, setEditTags] = useState(content?.tags.join(", ") || "");
-  const [editType, setEditType] = useState<ContentType>(
-    content?.type || "PAPER"
-  );
+  const [editTitle, setEditTitle] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editTags, setEditTags] = useState("");
+  const [editType, setEditType] = useState<ContentType>("PAPER");
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (!id) return;
+    let active = true;
+    setLoading(true);
+
+    fetchHubContentByIdApi(id)
+      .then((c) => {
+        if (!active) return;
+        setContent(c);
+        setEditTitle(c.title);
+        setEditDescription(c.description);
+        setEditTags(c.tags.join(", "));
+        setEditType(c.type);
+      })
+      .catch(() => {
+        if (!active) return;
+        setContent(null);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => { active = false; };
+  }, [id]);
+
+  if (loading) {
+    return <LoadingSkeleton />;
+  }
 
   if (!content) {
     return (
       <EmptyState
         title={t("pub_detail.content_not_found")}
         description={t("pub_detail.content_not_found_desc")}
-        action={{ label: t("publish.back_to_hub") || "Back to Publish", onClick: () => navigate("/publish") }}
+        action={{ label: t("publish.back_to_hub"), onClick: () => navigate("/publish") }}
       />
     );
   }
@@ -74,25 +100,68 @@ export function PublishDetail() {
   const canEdit = content.status === "DRAFT" || content.status === "REJECTED";
   const canSubmit = content.status === "DRAFT" || content.status === "REJECTED";
 
-  const handleSave = () => {
-    updateContent(content.id, {
-      title: editTitle,
-      description: editDescription,
-      tags: editTags.split(",").map((t) => t.trim()).filter(Boolean),
-      type: editType,
-    });
-    setIsEditing(false);
-    toast.success(t("pub_detail.content_updated_success"));
+  const getTypeLabel = (type: ContentType) => {
+    switch (type) {
+      case "PAPER":
+        return t("pub_detail.type_paper");
+      case "PROJECT":
+        return t("pub_detail.type_project");
+      case "TOOL":
+        return t("pub_detail.type_tool");
+      case "CONTEST":
+        return t("pub_detail.type_contest");
+      case "POLICY":
+        return t("pub_detail.type_policy");
+      default:
+        return type;
+    }
   };
 
-  const handleSubmit = () => {
-    updateContentStatus(content.id, "PENDING_REVIEW");
-    toast.success(t("pub_detail.submitted_for_review"));
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      const updated = await updatePublishContentByApi(content.id, {
+        title: editTitle,
+        description: editDescription,
+        tags: editTags.split(",").map((t) => t.trim()).filter(Boolean),
+        type: editType,
+      });
+      setContent(updated);
+      setIsEditing(false);
+      toast.success(t("pub_detail.content_updated_success"));
+    } catch {
+      toast.error(t("api.request_failed"));
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleSaveAsDraft = () => {
+  const handleSubmit = async () => {
+    setIsSaving(true);
+    try {
+      const updated = await submitPublishByApi(content.id);
+      if (updated) setContent(updated);
+      else setContent({ ...content, status: "PENDING_REVIEW" });
+      toast.success(t("pub_detail.submitted_for_review"));
+    } catch {
+      toast.error(t("api.request_failed"));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaveAsDraft = async () => {
     if (content.status === "REJECTED") {
-      updateContentStatus(content.id, "DRAFT");
+      setIsSaving(true);
+      try {
+        const updated = await updatePublishContentByApi(content.id, {});
+        setContent({ ...updated, status: "DRAFT" });
+      } catch {
+        // best-effort: update local state even if API fails
+        setContent({ ...content, status: "DRAFT" });
+      } finally {
+        setIsSaving(false);
+      }
     }
     toast.success(t("pub_detail.saved_as_draft"));
   };
@@ -116,6 +185,7 @@ export function PublishDetail() {
             {t("pub_detail.created")}{" "}
             {formatDistanceToNow(new Date(content.createdAt), {
               addSuffix: true,
+              locale: language === "zh" ? zhCN : enUS,
             })}
           </span>
         </div>
@@ -132,8 +202,8 @@ export function PublishDetail() {
             </Button>
           )}
           {canSubmit && !isEditing && (
-            <Button size="sm" className="gap-2" onClick={handleSubmit}>
-              <Send className="h-4 w-4" />
+            <Button size="sm" className="gap-2" onClick={handleSubmit} disabled={isSaving}>
+              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               {t("pub_detail.submit_for_review")}
             </Button>
           )}
@@ -183,11 +253,11 @@ export function PublishDetail() {
                   onChange={(e) => setEditType(e.target.value as ContentType)}
                   className="w-full rounded-lg border border-white/10 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-100 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                 >
-                  <option value="PAPER">Paper</option>
-                  <option value="PROJECT">Project</option>
-                  <option value="TOOL">Tool</option>
-                  <option value="CONTEST">Contest</option>
-                  <option value="POLICY">Policy</option>
+                  <option value="PAPER">{t("pub_detail.type_paper")}</option>
+                  <option value="PROJECT">{t("pub_detail.type_project")}</option>
+                  <option value="TOOL">{t("pub_detail.type_tool")}</option>
+                  <option value="CONTEST">{t("pub_detail.type_contest")}</option>
+                  <option value="POLICY">{t("pub_detail.type_policy")}</option>
                 </select>
               </div>
               <div>
@@ -211,11 +281,12 @@ export function PublishDetail() {
                   onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
                     setEditTags(e.target.value)
                   }
-                  placeholder="e.g. LLM, Transformers, Deep Learning"
+                  placeholder={t("pub_detail.tags_placeholder")}
                 />
               </div>
               <div className="flex items-center gap-2 pt-2">
-                <Button onClick={handleSave} size="sm">
+                <Button onClick={handleSave} size="sm" disabled={isSaving}>
+                  {isSaving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
                   {t("pub_detail.save_changes")}
                 </Button>
                 <Button
@@ -240,7 +311,7 @@ export function PublishDetail() {
                   variant="secondary"
                   className="text-xs uppercase tracking-wider"
                 >
-                  {content.type}
+                  {getTypeLabel(content.type)}
                 </Badge>
               </div>
               <CardTitle className="text-2xl text-zinc-100">
@@ -295,8 +366,8 @@ export function PublishDetail() {
                 >
                   {t("pub_detail.save_draft")}
                 </Button>
-                <Button size="sm" className="gap-2" onClick={handleSubmit}>
-                  <Send className="h-4 w-4" />
+                <Button size="sm" className="gap-2" onClick={handleSubmit} disabled={isSaving}>
+                  {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   {t("pub_detail.submit_for_review")}
                 </Button>
               </div>
@@ -307,7 +378,7 @@ export function PublishDetail() {
                 <Link to={`/hub/${content.type.toLowerCase()}/${content.id}`}>
                   <Button variant="outline" size="sm" className="gap-2">
                     <Eye className="h-4 w-4" />
-                    {t("publish.view_hub") || "View on Hub"}
+                    {t("publish.view_hub")}
                   </Button>
                 </Link>
               </div>

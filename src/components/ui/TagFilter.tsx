@@ -1,6 +1,7 @@
 import { Badge } from "./Badge";
 import { X } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { useTranslation } from "../../hooks/useTranslation";
 
 interface TagFilterProps {
   tags: string[];
@@ -10,6 +11,7 @@ interface TagFilterProps {
 }
 
 export function TagFilter({ tags, selectedTags, onChange, className }: TagFilterProps) {
+  const { t } = useTranslation();
   const toggleTag = (tag: string) => {
     if (selectedTags.includes(tag)) {
       onChange(selectedTags.filter((t) => t !== tag));
@@ -26,7 +28,7 @@ export function TagFilter({ tags, selectedTags, onChange, className }: TagFilter
           className="flex items-center gap-1 rounded-full border border-white/10 bg-zinc-800/50 px-2.5 py-1 text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-700/50 transition-colors"
         >
           <X className="h-3 w-3" />
-          Clear
+          {t("common.clear")}
         </button>
       )}
       {tags.map((tag) => {

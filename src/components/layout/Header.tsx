@@ -3,6 +3,7 @@ import { useState } from "react";
 import { useAuthStore } from "../../store/authStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { useTranslation } from "../../hooks/useTranslation";
+import { logoutByApi } from "../../lib/api";
 import { Button } from "../ui/Button";
 import { Avatar } from "../ui/Avatar";
 import { MessageBadge } from "../ui/MessageBadge";
@@ -16,7 +17,8 @@ export function Header() {
   const location = useLocation();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    await logoutByApi();
     logout();
     navigate("/login");
   };
@@ -44,7 +46,10 @@ export function Header() {
     : null;
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-zinc-200/5 dark:border-white/10 bg-white/80 dark:bg-[#0a0a0a]/80 backdrop-blur-md transition-colors" data-no-invert>
+    <header className="sticky top-0 z-50 w-full border-b border-zinc-200/5 dark:border-white/10 bg-white/80 dark:bg-[#0a0a0a]/80 backdrop-blur-md transition-colors" data-no-invert role="banner">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[60] focus:px-4 focus:py-2 focus:bg-indigo-600 focus:text-white focus:rounded-md">
+        Skip to main content
+      </a>
       <div className="container mx-auto flex h-16 max-w-7xl items-center justify-between px-4">
         <div className="flex items-center gap-8">
           <Link to="/" className="flex items-center gap-2">
@@ -55,7 +60,7 @@ export function Header() {
               AI-World
             </span>
           </Link>
-          <nav className="hidden md:flex items-center gap-6 text-sm font-medium">
+          <nav className="hidden md:flex items-center gap-6 text-sm font-medium" aria-label="Main navigation">
             {navLinks.map((link) => (
               <Link
                 key={link.to}
@@ -79,12 +84,13 @@ export function Header() {
 
         <div className="flex items-center gap-2">
           {/* Toggles */}
-          <Button
+            <Button
             variant="ghost"
             size="icon"
             className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
             onClick={toggleLanguage}
             title={t(theme === 'dark' ? "lang.zh" : "lang.en")}
+            aria-label={t(theme === 'dark' ? "lang.zh" : "lang.en")}
           >
             <Languages className="h-5 w-5" />
           </Button>
@@ -134,6 +140,8 @@ export function Header() {
               <button
                 className="md:hidden p-2 text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+                aria-expanded={mobileMenuOpen}
               >
                 {mobileMenuOpen ? (
                   <X className="h-5 w-5" />
@@ -152,7 +160,7 @@ export function Header() {
 
       {/* Mobile Menu */}
       {mobileMenuOpen && user && (
-        <div className="md:hidden border-t border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-[#0a0a0a]/95 backdrop-blur-md">
+        <div className="md:hidden border-t border-zinc-200 dark:border-white/10 bg-white/95 dark:bg-[#0a0a0a]/95 backdrop-blur-md" role="navigation" aria-label="Mobile navigation">
           <div className="container mx-auto max-w-7xl px-4 py-4 space-y-2">
             {navLinks.map((link) => (
               <Link

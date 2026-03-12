@@ -2,9 +2,11 @@ import { Link } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { BrainCircuit, ArrowLeft } from "lucide-react";
 import { usePageTitle } from "../lib/usePageTitle";
+import { useTranslation } from "../hooks/useTranslation";
 
 export function NotFound() {
-  usePageTitle("404 Not Found");
+  const { t } = useTranslation();
+  usePageTitle(t("notfound.title"));
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-[#050505] text-white selection:bg-indigo-500/30 p-6">
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-indigo-500/10 rounded-full blur-[120px] pointer-events-none"></div>
@@ -19,22 +21,22 @@ export function NotFound() {
           404
         </h1>
         <h2 className="mt-4 text-2xl font-semibold text-zinc-100">
-          Page Not Found
+          {t("notfound.heading")}
         </h2>
         <p className="mt-3 text-zinc-400 leading-relaxed">
-          The page you're looking for doesn't exist or has been moved.
+          {t("notfound.desc")}
         </p>
 
         <div className="mt-8 flex flex-col sm:flex-row items-center justify-center gap-3">
           <Link to="/hub">
             <Button className="gap-2 bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_15px_rgba(79,70,229,0.3)]">
-              Go to Knowledge Hub
+              {t("notfound.go_hub")}
             </Button>
           </Link>
           <Link to="/">
             <Button variant="outline" className="gap-2 border-white/10 hover:bg-white/5">
               <ArrowLeft className="h-4 w-4" />
-              Back to Home
+              {t("notfound.back_home")}
             </Button>
           </Link>
         </div>

@@ -1,6 +1,7 @@
 import { cn } from "../../lib/utils";
 import { Inbox, AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "./Button";
+import { useTranslation } from "../../hooks/useTranslation";
 
 interface EmptyStateProps {
   icon?: React.ReactNode;
@@ -43,17 +44,20 @@ interface ErrorStateProps {
   className?: string;
 }
 
-export function ErrorState({ title = "Something went wrong", description = "An error occurred while loading data. Please try again.", onRetry, className }: ErrorStateProps) {
+export function ErrorState({ title, description, onRetry, className }: ErrorStateProps) {
+  const { t } = useTranslation();
+  const resolvedTitle = title || t("state.error_title");
+  const resolvedDescription = description || t("state.error_desc");
   return (
     <div className={cn("flex flex-col items-center justify-center py-16 text-center", className)}>
       <div className="mb-4 rounded-full bg-red-500/10 p-4 border border-red-500/20">
         <AlertTriangle className="h-8 w-8 text-red-400" />
       </div>
-      <h3 className="text-lg font-medium text-zinc-100">{title}</h3>
-      <p className="mt-1 max-w-md text-sm text-zinc-500">{description}</p>
+      <h3 className="text-lg font-medium text-zinc-100">{resolvedTitle}</h3>
+      <p className="mt-1 max-w-md text-sm text-zinc-500">{resolvedDescription}</p>
       {onRetry && (
         <Button variant="outline" className="mt-4" onClick={onRetry}>
-          Try Again
+          {t("common.try_again")}
         </Button>
       )}
     </div>

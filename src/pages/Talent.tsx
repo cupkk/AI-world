@@ -1,5 +1,4 @@
 import { useState, useMemo, useEffect } from "react";
-import { useDataStore } from "../store/dataStore";
 import { useTranslation } from "../hooks/useTranslation";
 import { Button } from "../components/ui/Button";
 import { SearchBar } from "../components/ui/SearchBar";
@@ -10,13 +9,15 @@ import { EmptyState, ErrorState, LoadingCardGrid } from "../components/ui/StateD
 import { Users } from "lucide-react";
 import type { Role } from "../types";
 import { usePageTitle } from "../lib/usePageTitle";
+import type { User } from "../types";
+import { fetchTalentUsers } from "../lib/api";
 
 export function Talent() {
   const { t } = useTranslation();
   usePageTitle(t("talent.title"));
-  const { users } = useDataStore();
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
+  const [apiUsers, setApiUsers] = useState<User[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [activeRole, setActiveRole] = useState<"ALL" | Role>("ALL");
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
@@ -29,27 +30,70 @@ export function Talent() {
   ];
 
   useEffect(() => {
-    const timer = setTimeout(() => setIsLoading(false), 500);
-    return () => clearTimeout(timer);
-  }, []);
+    let active = true;
+    const timer = window.setTimeout(() => {
+      void loadTalentFromApi();
+    }, searchTerm ? 250 : 0);
+
+    async function loadTalentFromApi() {
+      setHasError(false);
+      setIsLoading(true);
+      try {
+        const result = await fetchTalentUsers({
+          q: searchTerm.trim() || undefined,
+          tags: selectedSkills.length > 0 ? selectedSkills : undefined,
+          role: activeRole,
+        });
+        if (!active) return;
+        setApiUsers(result);
+      } catch {
+        if (!active) return;
+        setApiUsers([]);
+        setHasError(true);
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [activeRole, searchTerm, selectedSkills]);
 
   const handleRetry = () => {
     setHasError(false);
     setIsLoading(true);
-    setTimeout(() => setIsLoading(false), 500);
+    fetchTalentUsers({
+      q: searchTerm.trim() || undefined,
+      tags: selectedSkills.length > 0 ? selectedSkills : undefined,
+      role: activeRole,
+    })
+      .then((result) => {
+        setApiUsers(result);
+      })
+      .catch(() => {
+        setApiUsers([]);
+        setHasError(true);
+      })
+      .finally(() => {
+        setIsLoading(false);
+      });
   };
 
   // Collect all unique skills
   const allSkills = useMemo(() => {
     const skills = new Set<string>();
-    users
+    apiUsers
       .filter((u) => u.role !== "ADMIN")
       .forEach((u) => u.skills?.forEach((s) => skills.add(s)));
     return Array.from(skills).sort();
-  }, [users]);
+  }, [apiUsers]);
 
   const talents = useMemo(() => {
-    return users.filter((u) => {
+    return apiUsers.filter((u) => {
       // Exclude admin
       if (u.role === "ADMIN") return false;
 
@@ -87,7 +131,7 @@ export function Talent() {
 
       return true;
     });
-  }, [users, searchTerm, activeRole, selectedSkills]);
+  }, [apiUsers, searchTerm, activeRole, selectedSkills]);
 
   return (
     <div className="space-y-6">

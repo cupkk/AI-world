@@ -1,8 +1,7 @@
-import { useState, useMemo } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useState, useMemo, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { useAuthStore } from "../store/authStore";
-import { useDataStore } from "../store/dataStore";
 import {
   Card,
   CardContent,
@@ -14,21 +13,13 @@ import { Input } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { PageHeader } from "../components/ui/PageHeader";
-import { EmptyState } from "../components/ui/StateDisplay";
-import { ContentType, ContentVisibility } from "../types";
+import { EmptyState, LoadingSkeleton, ErrorState } from "../components/ui/StateDisplay";
+import { ContentType, ContentVisibility, Content } from "../types";
 import { AlertTriangle, FileText, Plus, Save, Send } from "lucide-react";
 import { usePageTitle } from "../lib/usePageTitle";
 import { useTranslation } from "../hooks/useTranslation";
-
-// Keywords that indicate recruitment ads (prohibited for enterprise users)
-const RECRUITMENT_KEYWORDS = [
-  // English
-  "hiring", "job opening", "resume", "salary", "benefits package",
-  "apply now", "open position", "we are looking for", "join our team", "compensation",
-  // Chinese (per spec §6.8)
-  "薪资", "简历", "入职", "五险一金", "招聘", "应聘", "岗位",
-  "底薪", "月薪", "年薪", "待遇", "福利",
-];
+import { detectRecruitmentKeywords } from "../lib/recruitment";
+import { createPublishDraftByApi, fetchMyPublishContentsByApi, submitPublishByApi } from "../lib/api";
 
 // Content types available per role
 const ROLE_CONTENT_TYPES: Record<string, { types: ContentType[]; defaultType: ContentType }> = {
@@ -39,11 +30,13 @@ const ROLE_CONTENT_TYPES: Record<string, { types: ContentType[]; defaultType: Co
 };
 
 export function Publish() {
-  const { t, language } = useTranslation();
+  const { t } = useTranslation();
   usePageTitle(t("publish.title"));
   const { user } = useAuthStore();
-  const { contents, addContent } = useDataStore();
-  const navigate = useNavigate();
+  const [apiMyContents, setApiMyContents] = useState<Content[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingContents, setIsLoadingContents] = useState(true);
+  const [hasLoadError, setHasLoadError] = useState(false);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -58,45 +51,97 @@ export function Publish() {
   const [projectGoal, setProjectGoal] = useState("");
 
   // My existing content
-  const myContents = user
-    ? contents.filter((c) => c.authorId === user.id)
-    : [];
+  const myContents = apiMyContents;
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadMyContentsFromApi() {
+      setIsLoadingContents(true);
+      setHasLoadError(false);
+      try {
+        const result = await fetchMyPublishContentsByApi();
+        if (!active) return;
+        setApiMyContents(result);
+      } catch {
+        if (!active) return;
+        setApiMyContents([]);
+        setHasLoadError(true);
+      } finally {
+        if (active) setIsLoadingContents(false);
+      }
+    }
+
+    void loadMyContentsFromApi();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   // Check for recruitment keywords
   const detectedKeywords = useMemo(() => {
     if (user?.role !== "ENTERPRISE_LEADER") return [];
-    const text = `${title} ${description}`.toLowerCase();
-    return RECRUITMENT_KEYWORDS.filter((kw) => text.includes(kw));
-  }, [title, description, user?.role]);
+    const text = `${title} ${description} ${tags} ${projectBackground} ${projectGoal}`;
+    return detectRecruitmentKeywords(text);
+  }, [title, description, tags, projectBackground, projectGoal, user?.role]);
 
-  const handleSubmit = (asDraft: boolean) => {
+  const handleSubmit = async (asDraft: boolean) => {
     if (!user) return;
     if (!title.trim() || !description.trim()) {
       toast.error(t("publish.toast_fill"));
       return;
     }
+    if (user.role === "ENTERPRISE_LEADER" && detectedKeywords.length > 0) {
+      toast.error(t("publish.recruitment_warning"), {
+        description: `${t("publish.recruitment_warning_desc")} ${detectedKeywords.join(", ")}. ${t("publish.recruitment_warning_desc_2")}`,
+      });
+      return;
+    }
 
     const fullDescription =
       user.role === "ENTERPRISE_LEADER" && (projectBackground || projectGoal)
-        ? `${description}\n\n**${language === 'zh' ? '背景' : 'Background'}:** ${projectBackground}\n\n**${language === 'zh' ? '目标' : 'Goal'}:** ${projectGoal}`
+        ? `${description}\n\n**${t("publish.project_bg")}:** ${projectBackground}\n\n**${t("publish.project_goal")}:** ${projectGoal}`
         : description;
+    const parsedTags = tags
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean);
 
-    addContent({
-      id: `c${Date.now()}`,
-      title,
-      description: fullDescription,
-      type,
-      status: asDraft ? "DRAFT" : "PENDING_REVIEW",
-      authorId: user.id,
-      createdAt: new Date().toISOString(),
-      tags: tags
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean),
-      likes: 0,
-      views: 0,
-      visibility: user.role === "ENTERPRISE_LEADER" ? visibility : "ALL",
-    });
+    setIsSubmitting(true);
+
+    try {
+      const created = await createPublishDraftByApi({
+        title,
+        description: fullDescription,
+        type,
+        tags: parsedTags,
+        visibility: user.role === "ENTERPRISE_LEADER" ? visibility : "ALL",
+      });
+
+      if (asDraft) {
+        const draftItem = {
+          ...created,
+          authorId: created.authorId || user.id,
+          status: "DRAFT" as const,
+        };
+        setApiMyContents((prev) => [draftItem, ...prev]);
+      } else {
+        const submitted = await submitPublishByApi(created.id);
+        const reviewItem: Content = {
+          ...(submitted ?? created),
+          authorId: (submitted ?? created).authorId || user.id,
+          status: "PENDING_REVIEW" as const,
+        };
+        setApiMyContents((prev) => [reviewItem, ...prev]);
+      }
+    } catch {
+      toast.error(t("api.request_failed"));
+      setIsSubmitting(false);
+      return; // Keep form data so user can retry
+    } finally {
+      setIsSubmitting(false);
+    }
 
     toast.success(
       asDraft
@@ -117,6 +162,9 @@ export function Publish() {
     setShowForm(false);
   };
 
+  if (hasLoadError) return <ErrorState onRetry={() => { setHasLoadError(false); setIsLoadingContents(true); fetchMyPublishContentsByApi().then(r => setApiMyContents(r)).catch(() => setHasLoadError(true)).finally(() => setIsLoadingContents(false)); }} />;
+  if (isLoadingContents) return <LoadingSkeleton />;
+
   return (
     <div className="mx-auto max-w-3xl space-y-8">
       <PageHeader
@@ -124,7 +172,7 @@ export function Publish() {
         description={t("publish.desc")}
       >
         {!showForm && (
-          <Button className="gap-2" onClick={() => setShowForm(true)}>
+          <Button data-testid="publish-new-content-btn" className="gap-2" onClick={() => setShowForm(true)}>
             <Plus className="h-4 w-4" />
             {t("publish.new_content")}
           </Button>
@@ -327,17 +375,20 @@ export function Publish() {
                     variant="outline"
                     className="gap-2"
                     onClick={() => handleSubmit(true)}
+                    disabled={isSubmitting || (user.role === "ENTERPRISE_LEADER" && detectedKeywords.length > 0)}
                   >
                     <Save className="h-4 w-4" />
                     {t("publish.save_draft")}
                   </Button>
                   <Button
                     type="button"
-                    className={`gap-2 ${detectedKeywords.length > 0 ? "bg-amber-600 hover:bg-amber-500" : ""}`}
+                    className="gap-2"
+                    data-testid="publish-submit-review-btn"
                     onClick={() => handleSubmit(false)}
+                    disabled={isSubmitting || (user.role === "ENTERPRISE_LEADER" && detectedKeywords.length > 0)}
                   >
                     <Send className="h-4 w-4" />
-                    {detectedKeywords.length > 0 ? (language === 'zh' ? "仍要提交（需审核）" : "Submit Anyway (Will Be Reviewed)") : t("publish.submit_review")}
+                    {t("publish.submit_review")}
                   </Button>
                 </div>
               </div>
@@ -350,7 +401,7 @@ export function Publish() {
       {myContents.length > 0 ? (
         <div className="space-y-3">
           <h2 className="text-lg font-semibold text-zinc-100">
-            {language === 'zh' ? `我的提交 (${myContents.length})` : `My Submissions (${myContents.length})`}
+            {t("publish.my_submissions")} ({myContents.length})
           </h2>
           {myContents.map((content) => (
             <Link key={content.id} to={`/publish/${content.id}`}>
@@ -364,7 +415,7 @@ export function Publish() {
                       </span>
                     </div>
                     <p className="font-medium text-zinc-100 truncate">
-                      {content.title}
+                      <span data-testid="publish-item-title">{content.title}</span>
                     </p>
                     <p className="text-xs text-zinc-500 mt-0.5">
                       {new Date(content.createdAt).toLocaleDateString()}
@@ -372,7 +423,7 @@ export function Publish() {
                   </div>
                   {content.status === "REJECTED" && content.rejectReason && (
                     <div className="text-xs text-red-400 max-w-[200px] truncate">
-                      {language === 'zh' ? '原因' : 'Reason'}: {content.rejectReason}
+                      {t("publish.reason")}: {content.rejectReason}
                     </div>
                   )}
                 </CardContent>

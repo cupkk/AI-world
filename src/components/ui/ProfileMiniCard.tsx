@@ -6,12 +6,14 @@ import { Button } from "./Button";
 import { Avatar } from "./Avatar";
 import { MapPin, Briefcase, MessageSquare } from "lucide-react";
 import type { User } from "../../types";
+import { useTranslation } from "../../hooks/useTranslation";
 
 interface ProfileMiniCardProps {
   user: User;
 }
 
 export function ProfileMiniCard({ user }: ProfileMiniCardProps) {
+  const { t } = useTranslation();
   return (
     <Card className="flex flex-col text-center transition-all hover:shadow-[0_0_20px_rgba(79,70,229,0.15)] hover:border-indigo-500/30 group glass-panel h-full">
       <CardHeader className="items-center pb-4">
@@ -62,7 +64,7 @@ export function ProfileMiniCard({ user }: ProfileMiniCardProps) {
         <div className="flex w-full gap-2">
           <Link to={`/u/${user.id}`} className="flex-1">
             <Button variant="outline" className="w-full">
-              Profile
+              {t("common.profile")}
             </Button>
           </Link>
           <Link to={`/messages?to=${user.id}`}>

@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
+import { useState, useEffect } from "react";
 import { useAuthStore } from "../store/authStore";
-import { useDataStore } from "../store/dataStore";
 import {
   Card,
   CardContent,
@@ -11,22 +11,63 @@ import { Badge } from "../components/ui/Badge";
 import { Button } from "../components/ui/Button";
 import { StatusBadge } from "../components/ui/StatusBadge";
 import { PageHeader } from "../components/ui/PageHeader";
+import { LoadingSkeleton, ErrorState } from "../components/ui/StateDisplay";
 import { Avatar } from "../components/ui/Avatar";
 import { formatRole } from "../lib/utils";
 import { toast } from "sonner";
 import { FileText, Eye, ThumbsUp, Plus, BrainCircuit, Upload, Settings, Users, UserPlus, MessageSquare, CheckCircle, XCircle } from "lucide-react";
 import { usePageTitle } from "../lib/usePageTitle";
 import { useTranslation } from "../hooks/useTranslation";
+import {
+  fetchMyPublishContentsByApi,
+  fetchHubContents,
+  fetchMyApplicationsByApi,
+  fetchTalentUsers,
+  updateApplicationStatusByApi,
+} from "../lib/api";
+import type { Content, Application, User } from "../types";
 
 export function DashboardExpert() {
-  usePageTitle("Dashboard");
   const { t } = useTranslation();
+  usePageTitle(t("page.dashboard"));
   const { user } = useAuthStore();
-  const { contents, users, applications, updateApplicationStatus } = useDataStore();
+
+  const [myContents, setMyContents] = useState<Content[]>([]);
+  const [contents, setContents] = useState<Content[]>([]);
+  const [applications, setApplications] = useState<Application[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [hasError, setHasError] = useState(false);
+
+  const loadData = () => {
+    if (!user) return;
+    setIsLoading(true);
+    setHasError(false);
+    Promise.all([
+      fetchMyPublishContentsByApi(),
+      fetchHubContents(),
+      fetchMyApplicationsByApi(),
+      fetchTalentUsers(),
+    ]).then(([mine, all, apps, talent]) => {
+      setMyContents(mine);
+      setContents(all);
+      setApplications(apps);
+      setUsers(talent);
+    }).catch(() => {
+      setHasError(true);
+    }).finally(() => {
+      setIsLoading(false);
+    });
+  };
+
+  useEffect(() => {
+    loadData();
+  }, [user?.id]);
 
   if (!user || user.role !== "EXPERT") return null;
+  if (hasError) return <ErrorState onRetry={loadData} />;
+  if (isLoading) return <LoadingSkeleton />;
 
-  const myContents = contents.filter((c) => c.authorId === user.id);
   const totalViews = myContents.reduce((acc, c) => acc + c.views, 0);
   const totalLikes = myContents.reduce((acc, c) => acc + c.likes, 0);
 
@@ -232,11 +273,11 @@ export function DashboardExpert() {
                   {app.status === "SUBMITTED" && (
                     <div className="flex gap-2 ml-11">
                       <Button size="sm" variant="outline" className="h-7 text-xs gap-1 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
-                        onClick={() => { updateApplicationStatus(app.id, "ACCEPTED"); toast.success("Application accepted"); }}>
+                        onClick={async () => { try { await updateApplicationStatusByApi(app.id, "accepted"); setApplications(prev => prev.map(a => a.id === app.id ? { ...a, status: "ACCEPTED" } : a)); toast.success(t("dashboard.app_accepted")); } catch { toast.error(t("api.request_failed")); } }}>
                         <CheckCircle className="h-3 w-3" /> {t("dashboard.approve")}
                       </Button>
                       <Button size="sm" variant="outline" className="h-7 text-xs gap-1 border-red-500/30 text-red-400 hover:bg-red-500/10"
-                        onClick={() => { updateApplicationStatus(app.id, "REJECTED"); toast.error("Application rejected"); }}>
+                        onClick={async () => { try { await updateApplicationStatusByApi(app.id, "rejected"); setApplications(prev => prev.map(a => a.id === app.id ? { ...a, status: "REJECTED" } : a)); toast.error(t("dashboard.app_rejected")); } catch { toast.error(t("api.request_failed")); } }}>
                         <XCircle className="h-3 w-3" /> {t("dashboard.decline")}
                       </Button>
                       <Link to={`/messages?to=${applicant.id}`}>
@@ -274,9 +315,11 @@ export function DashboardExpert() {
                 to={`/u/${eu.id}`}
                 className="flex items-center gap-3 border-b border-white/10 pb-4 last:border-0 last:pb-0 hover:bg-zinc-800/30 -mx-2 px-2 py-1 rounded-lg transition-colors"
               >
-                <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full border border-white/10 bg-zinc-800">
-                  <img src={eu.avatar} alt={eu.name} className="h-full w-full object-cover" />
-                </div>
+                <Avatar
+                  src={eu.avatar}
+                  fallback={eu.name.charAt(0)}
+                  className="h-10 w-10"
+                />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium text-zinc-300">{eu.name}</p>
                   <p className="text-xs text-zinc-500 truncate">{eu.title}{eu.company ? ` - ${eu.company}` : ""}</p>

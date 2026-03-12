@@ -1,11 +1,44 @@
 import { Link } from "react-router-dom";
-import { useDataStore } from "../../store/dataStore";
+import { useEffect, useState } from "react";
 import { Button } from "./Button";
 import { MessageSquare } from "lucide-react";
+import { useTranslation } from "../../hooks/useTranslation";
+import { useAuthStore } from "../../store/authStore";
+import { fetchMessageConversationsByApi, fetchMessageRequestsByApi } from "../../lib/api";
 
 export function MessageBadge() {
-  const { chatThreads } = useDataStore();
-  const totalUnread = chatThreads.reduce((sum, t) => sum + t.unreadCount, 0);
+  const { t } = useTranslation();
+  const { user, isAuthenticated } = useAuthStore();
+  const [totalUnread, setTotalUnread] = useState(0);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user) {
+      setTotalUnread(0);
+      return;
+    }
+
+    let active = true;
+
+    void Promise.all([
+      fetchMessageConversationsByApi(user.id),
+      fetchMessageRequestsByApi(user.id),
+    ])
+      .then(([conversations, requests]) => {
+        if (!active) return;
+        setTotalUnread(
+          [...conversations, ...requests].reduce((sum, thread) => sum + thread.unreadCount, 0),
+        );
+      })
+      .catch(() => {
+        if (active) {
+          setTotalUnread(0);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [isAuthenticated, user]);
 
   return (
     <Link to="/messages">
@@ -13,7 +46,7 @@ export function MessageBadge() {
         variant="ghost"
         size="icon"
         className="text-zinc-400 relative hover:text-zinc-100"
-        title="Messages"
+        title={t("msg.messages")}
       >
         <MessageSquare className="h-5 w-5" />
         {totalUnread > 0 && (
