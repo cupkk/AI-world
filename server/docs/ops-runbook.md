@@ -101,10 +101,18 @@ Root repository live checks:
 ```bash
 set PRODUCTION_BASE_URL=https://ai-world.asia
 set PLAYWRIGHT_BASE_URL=https://ai-world.asia
-npx playwright test -c playwright.live.config.ts tests/live/prod-smoke.spec.ts
+npm run test:live:prod-smoke
 
 set STAGING_BASE_URL=https://staging.ai-world.asia
 set PLAYWRIGHT_BASE_URL=https://staging.ai-world.asia
 set LIVE_ALLOW_MUTATIONS=1
-npx playwright test -c playwright.live.config.ts tests/live/staging-mutation.spec.ts
+npm run test:live:staging-mutation
 ```
+
+Recommended release order:
+
+1. `CI`
+2. `Deploy Staging`
+3. Complete the checklist in `docs/上线运营清单.md`
+4. `Promote Production`
+5. Fill `docs/发布记录模板.md`

@@ -110,7 +110,23 @@ set LIVE_EXPERT_EMAIL=<expert-email>
 set LIVE_EXPERT_PASSWORD=<expert-password>
 set LIVE_ENTERPRISE_EMAIL=<enterprise-email>
 set LIVE_ENTERPRISE_PASSWORD=<enterprise-password>
-npx playwright test -c playwright.live.config.ts tests/live/prod-smoke.spec.ts
+npm run test:live:prod-smoke
+```
+
+Staging smoke:
+
+```bash
+set STAGING_BASE_URL=https://staging.ai-world.asia
+set PLAYWRIGHT_BASE_URL=https://staging.ai-world.asia
+set LIVE_ADMIN_EMAIL_STAGING=<admin-email>
+set LIVE_ADMIN_PASSWORD_STAGING=<admin-password>
+set LIVE_LEARNER_EMAIL_STAGING=<learner-email>
+set LIVE_LEARNER_PASSWORD_STAGING=<learner-password>
+set LIVE_EXPERT_EMAIL_STAGING=<expert-email>
+set LIVE_EXPERT_PASSWORD_STAGING=<expert-password>
+set LIVE_ENTERPRISE_EMAIL_STAGING=<enterprise-email>
+set LIVE_ENTERPRISE_PASSWORD_STAGING=<enterprise-password>
+npm run test:live:staging-smoke
 ```
 
 Staging mutation:
@@ -127,7 +143,7 @@ set LIVE_EXPERT_EMAIL_STAGING=<expert-email>
 set LIVE_EXPERT_PASSWORD_STAGING=<expert-password>
 set LIVE_ENTERPRISE_EMAIL_STAGING=<enterprise-email>
 set LIVE_ENTERPRISE_PASSWORD_STAGING=<enterprise-password>
-npx playwright test -c playwright.live.config.ts tests/live/staging-mutation.spec.ts
+npm run test:live:staging-mutation
 ```
 
 ## Deployment Model
@@ -185,6 +201,14 @@ The release chain is split into three workflows:
 
 Required secrets are documented in [GitHub_Actions_Secrets.md](/d:/github/AI-world/docs/GitHub_Actions_Secrets.md).
 
+Recommended release sequence:
+
+1. Merge to `main` and wait for `CI` to pass.
+2. Run `Deploy Staging`.
+3. Complete the automated and manual checks in [上线运营清单.md](/d:/github/AI-world/docs/%E4%B8%8A%E7%BA%BF%E8%BF%90%E8%90%A5%E6%B8%85%E5%8D%95.md).
+4. Run `Promote Production` with the same commit SHA as `image_tag`.
+5. Record the release in [发布记录模板.md](/d:/github/AI-world/docs/%E5%8F%91%E5%B8%83%E8%AE%B0%E5%BD%95%E6%A8%A1%E6%9D%BF.md).
+
 ## Shared Contracts
 
 - shared enums and status values: `server/src/common/contracts.ts`
@@ -200,7 +224,7 @@ When contract values change, update the shared definition first and then the fro
 - failure: returns HTTP `503`
 - machine-readable code: `errorCode: "ASSISTANT_UNAVAILABLE"`
 
-The frontend no longer falls back to a fake “local mode”.
+The frontend no longer falls back to a fake "local mode".
 
 ## External Prerequisites
 
