@@ -137,6 +137,33 @@ jobs:
           if [ "${missing}" -ne 0 ]; then
             exit 1
           fi
+          production_base_url="$(printf '%s' "${PRODUCTION_BASE_URL}" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          case "${production_base_url}" in
+            \"*\")
+              production_base_url="${production_base_url#\"}"
+              production_base_url="${production_base_url%\"}"
+              ;;
+          esac
+          case "${production_base_url}" in
+            \'*\')
+              production_base_url="${production_base_url#\'}"
+              production_base_url="${production_base_url%\'}"
+              ;;
+          esac
+          case "${production_base_url}" in
+            https://*|http://*)
+              ;;
+            *)
+              echo "::error::PRODUCTION_BASE_URL must be a full URL like https://ai-world.asia. Current trimmed value: ${production_base_url}"
+              exit 1
+              ;;
+          esac
+          case "${production_base_url}" in
+            *" "*)
+              echo "::error::PRODUCTION_BASE_URL must not contain spaces. Current trimmed value: ${production_base_url}"
+              exit 1
+              ;;
+          esac
 
       - name: Configure SSH key
         env:
@@ -201,7 +228,9 @@ jobs:
       - name: Run production readiness checks
         env:
           PRODUCTION_BASE_URL: ${{ secrets.PRODUCTION_BASE_URL }}
-        run: bash server/scripts/check-stack.sh production "${PRODUCTION_BASE_URL}"
+        run: |
+          sanitized_production_base_url="$(printf '%s' "${PRODUCTION_BASE_URL}" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          bash server/scripts/check-stack.sh production "${sanitized_production_base_url}"
 
       - name: Verify production observability
         env:
