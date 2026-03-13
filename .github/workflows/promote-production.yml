@@ -153,7 +153,25 @@ jobs:
           SSH_USER: ${{ secrets.DEPLOY_USER }}
         run: |
           set -euo pipefail
-          ssh -i ~/.ssh/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=15 "${SSH_USER}@${SSH_HOST}" "hostname && docker --version"
+          ssh_host="$(printf '%s' "${SSH_HOST}" | tr -d '\r\n' | xargs)"
+          ssh_user="$(printf '%s' "${SSH_USER}" | tr -d '\r\n' | xargs)"
+          if [ -z "${ssh_host}" ] || [ -z "${ssh_user}" ]; then
+            echo "::error::DEPLOY_HOST or DEPLOY_USER is empty after trimming whitespace."
+            exit 1
+          fi
+          case "${ssh_host}" in
+            *[!A-Za-z0-9._-]*)
+              echo "::error::DEPLOY_HOST must be a raw hostname or IP without protocol, path, spaces, or quotes. Current trimmed value: ${ssh_host}"
+              exit 1
+              ;;
+          esac
+          case "${ssh_user}" in
+            *[!A-Za-z0-9._-]*)
+              echo "::error::DEPLOY_USER contains invalid characters after trimming. Current trimmed value: ${ssh_user}"
+              exit 1
+              ;;
+          esac
+          ssh -i ~/.ssh/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=no -o BatchMode=yes -o ConnectTimeout=15 "${ssh_user}@${ssh_host}" "hostname && docker --version"
 
       - name: Deploy production stack
         env:
@@ -166,8 +184,10 @@ jobs:
           IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
+          ssh_host="$(printf '%s' "${SSH_HOST}" | tr -d '\r\n' | xargs)"
+          ssh_user="$(printf '%s' "${SSH_USER}" | tr -d '\r\n' | xargs)"
           remote_env="REGISTRY=${REGISTRY@Q} REGISTRY_HOST=${REGISTRY_HOST@Q} REGISTRY_USER=${REGISTRY_USER@Q} REGISTRY_PASSWORD=${REGISTRY_PASSWORD@Q} IMAGE_TAG=${IMAGE_TAG@Q}"
-          ssh -i ~/.ssh/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=no "${SSH_USER}@${SSH_HOST}" "${remote_env} bash -s" <<'EOF'
+          ssh -i ~/.ssh/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=no "${ssh_user}@${ssh_host}" "${remote_env} bash -s" <<'EOF'
             set -euo pipefail
             printf '%s' "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" -u "${REGISTRY_USER}" --password-stdin
             cd /opt/aiworld/server
@@ -188,7 +208,10 @@ jobs:
           SSH_HOST: ${{ secrets.DEPLOY_HOST }}
           SSH_USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          ssh -i ~/.ssh/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=no "${SSH_USER}@${SSH_HOST}" <<'EOF'
+          set -euo pipefail
+          ssh_host="$(printf '%s' "${SSH_HOST}" | tr -d '\r\n' | xargs)"
+          ssh_user="$(printf '%s' "${SSH_USER}" | tr -d '\r\n' | xargs)"
+          ssh -i ~/.ssh/id_rsa -o IdentitiesOnly=yes -o StrictHostKeyChecking=no "${ssh_user}@${ssh_host}" <<'EOF'
             set -euo pipefail
             cd /opt/aiworld/server
             sleep 5

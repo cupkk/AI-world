@@ -8,7 +8,7 @@
 
 | Secret | 说明 |
 | --- | --- |
-| `DEPLOY_HOST` | ECS 公网 IP 或堡垒机出口地址 |
+| `DEPLOY_HOST` | ECS 公网 IP 或堡垒机出口地址。只填裸 IP/主机名，例如 `47.238.143.212`，不要带 `https://`、端口、路径、引号或空格。 |
 | `DEPLOY_USER` | 服务器登录用户，当前生产环境通常为 `root` |
 | `DEPLOY_SSH_KEY` | 用于部署的 SSH 私钥 |
 
