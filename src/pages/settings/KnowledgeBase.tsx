@@ -23,6 +23,35 @@ import { useTranslation } from "../../hooks/useTranslation";
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 const SUPPORTED_EXTENSIONS = ["pdf", "doc", "docx", "ppt", "pptx"];
+const TEMP_DOCUMENT_PREFIX = "temp_";
+
+function isTemporaryDocument(doc: KnowledgeDocument) {
+  return doc.id.startsWith(TEMP_DOCUMENT_PREFIX);
+}
+
+function matchesUploadedDocument(
+  localDoc: KnowledgeDocument,
+  remoteDoc: KnowledgeDocument,
+) {
+  return (
+    localDoc.name === remoteDoc.name &&
+    localDoc.size === remoteDoc.size &&
+    localDoc.type === remoteDoc.type
+  );
+}
+
+function mergeKnowledgeDocuments(
+  existing: KnowledgeDocument[],
+  remote: KnowledgeDocument[],
+) {
+  const pendingTemporaryDocs = existing.filter(
+    (doc) =>
+      isTemporaryDocument(doc) &&
+      !remote.some((remoteDoc) => matchesUploadedDocument(doc, remoteDoc)),
+  );
+
+  return [...pendingTemporaryDocs, ...remote];
+}
 
 export function KnowledgeBase() {
   const { t } = useTranslation();
@@ -52,7 +81,7 @@ export function KnowledgeBase() {
     try {
       const files = await fetchKnowledgeBaseFilesApi();
       setIfMounted(() => {
-        setDocuments(files);
+        setDocuments((prev) => mergeKnowledgeDocuments(prev, files));
         setHasSyncError(false);
       });
     } catch {
@@ -148,7 +177,9 @@ export function KnowledgeBase() {
       return;
     }
 
-    const tempId = `temp_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const tempId = `${TEMP_DOCUMENT_PREFIX}${Date.now()}_${Math.random()
+      .toString(36)
+      .slice(2, 9)}`;
     const tempDoc: KnowledgeDocument = {
       id: tempId,
       userId: user.id,
