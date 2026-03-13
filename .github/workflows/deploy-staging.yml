@@ -138,36 +138,84 @@ jobs:
       - name: Build and push backend image
         env:
           REGISTRY: ${{ steps.registry.outputs.registry }}
+          REGISTRY_HOST: ${{ steps.registry.outputs.registry_host }}
+          REGISTRY_USER: ${{ steps.registry.outputs.registry_user }}
+          REGISTRY_PASSWORD: ${{ steps.registry.outputs.registry_password }}
           IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
+          push_with_retry() {
+            image="$1"
+            for attempt in 1 2 3; do
+              if docker push "${image}"; then
+                return 0
+              fi
+              echo "docker push failed for ${image} on attempt ${attempt}, retrying..." >&2
+              sleep $((attempt * 10))
+              printf '%s' "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" -u "${REGISTRY_USER}" --password-stdin
+            done
+            echo "::error::docker push failed for ${image} after 3 attempts." >&2
+            return 1
+          }
           image="${REGISTRY}/aiworld-api:${IMAGE_TAG}"
           docker build -t "${image}" --target production ./server
-          docker push "${image}"
+          push_with_retry "${image}"
 
       - name: Build and push frontend image
         env:
           REGISTRY: ${{ steps.registry.outputs.registry }}
+          REGISTRY_HOST: ${{ steps.registry.outputs.registry_host }}
+          REGISTRY_USER: ${{ steps.registry.outputs.registry_user }}
+          REGISTRY_PASSWORD: ${{ steps.registry.outputs.registry_password }}
           IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
+          push_with_retry() {
+            image="$1"
+            for attempt in 1 2 3; do
+              if docker push "${image}"; then
+                return 0
+              fi
+              echo "docker push failed for ${image} on attempt ${attempt}, retrying..." >&2
+              sleep $((attempt * 10))
+              printf '%s' "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" -u "${REGISTRY_USER}" --password-stdin
+            done
+            echo "::error::docker push failed for ${image} after 3 attempts." >&2
+            return 1
+          }
           image="${REGISTRY}/aiworld-web:${IMAGE_TAG}"
           docker build \
             --build-arg VITE_ENABLE_DEMO_MODE=false \
             --build-arg VITE_ALLOW_DEMO_PREFILL=false \
             -t "${image}" \
             -f Dockerfile .
-          docker push "${image}"
+          push_with_retry "${image}"
 
       - name: Build and push worker image
         env:
           REGISTRY: ${{ steps.registry.outputs.registry }}
+          REGISTRY_HOST: ${{ steps.registry.outputs.registry_host }}
+          REGISTRY_USER: ${{ steps.registry.outputs.registry_user }}
+          REGISTRY_PASSWORD: ${{ steps.registry.outputs.registry_password }}
           IMAGE_TAG: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
+          push_with_retry() {
+            image="$1"
+            for attempt in 1 2 3; do
+              if docker push "${image}"; then
+                return 0
+              fi
+              echo "docker push failed for ${image} on attempt ${attempt}, retrying..." >&2
+              sleep $((attempt * 10))
+              printf '%s' "${REGISTRY_PASSWORD}" | docker login "${REGISTRY_HOST}" -u "${REGISTRY_USER}" --password-stdin
+            done
+            echo "::error::docker push failed for ${image} after 3 attempts." >&2
+            return 1
+          }
           image="${REGISTRY}/aiworld-worker:${IMAGE_TAG}"
           docker build -t "${image}" ./worker
-          docker push "${image}"
+          push_with_retry "${image}"
 
       - name: Configure SSH key
         env:
