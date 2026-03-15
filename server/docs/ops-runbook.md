@@ -115,4 +115,4 @@ Recommended release order:
 2. `Deploy Staging`
 3. Complete the checklist in `docs/上线运营清单.md`
 4. `Promote Production`
-5. Fill `docs/发布记录模板.md`
+5. Save the final record under `docs/releases/`

@@ -15,8 +15,8 @@ import { ContactCard } from "../components/ui/ContactCard";
 import { EmptyState, LoadingSkeleton } from "../components/ui/StateDisplay";
 import { usePageTitle } from "../lib/usePageTitle";
 import { useTranslation } from "../hooks/useTranslation";
-import { fetchProfileByIdApi, fetchHubContents } from "../lib/api";
-import type { User, Content } from "../types";
+import { fetchProfilePageByApi } from "../lib/api";
+import type { ProfilePageData } from "../types";
 import {
   MapPin,
   Briefcase,
@@ -35,20 +35,16 @@ export function Profile() {
   const { id } = useParams<{ id: string }>();
   const { user: currentUser } = useAuthStore();
 
-  const [user, setUser] = useState<User | null>(null);
-  const [userContents, setUserContents] = useState<Content[]>([]);
+  const [profilePage, setProfilePage] = useState<ProfilePageData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    Promise.all([
-      fetchProfileByIdApi(id).catch(() => null),
-      fetchHubContents().then(all => all.filter(c => c.authorId === id && c.status === "PUBLISHED")).catch(() => []),
-    ]).then(([u, contents]) => {
-      setUser(u);
-      setUserContents(contents);
-    }).finally(() => setLoading(false));
+    fetchProfilePageByApi(id)
+      .then((nextProfilePage) => setProfilePage(nextProfilePage))
+      .catch(() => setProfilePage(null))
+      .finally(() => setLoading(false));
   }, [id]);
 
   if (loading) {
@@ -59,7 +55,7 @@ export function Profile() {
     );
   }
 
-  if (!user) {
+  if (!profilePage?.user) {
     return (
       <div className="mx-auto max-w-4xl py-20">
         <EmptyState
@@ -78,6 +74,10 @@ export function Profile() {
       </div>
     );
   }
+
+  const user = profilePage.user;
+  const userContents = profilePage.contents;
+  const summary = profilePage.summary;
 
   const displayEmail = user.contactEmail || user.email;
   const emailVisibility = normalizeEmailVisibility(user.privacySettings?.emailVisibility);
@@ -201,6 +201,35 @@ export function Profile() {
       </div>
 
       <div className="grid gap-6 md:grid-cols-2">
+        <Card className="glass-panel md:col-span-2">
+          <CardContent className="grid gap-4 p-5 sm:grid-cols-3">
+            <div className="rounded-2xl border border-white/10 bg-zinc-950/50 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">
+                {t("profile.stat_published")}
+              </p>
+              <p className="mt-3 text-3xl font-semibold text-zinc-100">
+                {summary.publishedContentCount}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-zinc-950/50 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">
+                {t("profile.stat_views")}
+              </p>
+              <p className="mt-3 text-3xl font-semibold text-zinc-100">
+                {summary.totalViews}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-zinc-950/50 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">
+                {t("profile.stat_likes")}
+              </p>
+              <p className="mt-3 text-3xl font-semibold text-zinc-100">
+                {summary.totalLikes}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
         <Card className="glass-panel">
           <CardHeader>
             <CardTitle className="text-lg text-zinc-100 flex items-center gap-2">
@@ -258,14 +287,7 @@ export function Profile() {
         </h2>
         {userContents.length > 0 ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {userContents
-              .filter((c) => {
-                if (user.role === "EXPERT") return ["PAPER", "PROJECT", "TOOL"].includes(c.type);
-                if (user.role === "ENTERPRISE_LEADER") return ["PROJECT"].includes(c.type);
-                if (user.role === "LEARNER") return ["PAPER", "TOOL"].includes(c.type);
-                return true;
-              })
-              .map((content) => (
+            {userContents.map((content) => (
               <Link to={`/hub/${content.type.toLowerCase()}/${content.id}`} key={content.id}>
                 <Card className="flex flex-col hover:border-indigo-500/30 transition-colors glass-panel h-full">
                   <CardHeader className="p-5">

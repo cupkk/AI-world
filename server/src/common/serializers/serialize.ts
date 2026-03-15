@@ -24,6 +24,7 @@ export interface SerializedContent {
   coverImage?: string;
   visibility?: string;
   rejectReason?: string;
+  author?: SerializedUser;
 }
 
 export function serializeHubItem(item: any): SerializedContent {
@@ -41,6 +42,7 @@ export function serializeHubItem(item: any): SerializedContent {
     coverImage: item.coverUrl ?? undefined,
     visibility: undefined,
     rejectReason: item.rejectReason ?? undefined,
+    ...(item.author ? { author: serializeUser(item.author, { maskEmail: true }) } : {}),
   };
 }
 

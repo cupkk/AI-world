@@ -107,6 +107,10 @@ export async function mockLoginApis(
   await page.route("**/api/applications/mine", async (route) => {
     await route.fulfill(json([]));
   });
+
+  await page.route("**/api/applications/outbox", async (route) => {
+    await route.fulfill(json([]));
+  });
 }
 
 export async function mockInviteApis(
@@ -172,6 +176,10 @@ export async function mockProtectedRouteApis(
   await page.route("**/api/applications/mine", async (route) => {
     await route.fulfill(json(myApplications));
   });
+
+  await page.route("**/api/applications/outbox", async (route) => {
+    await route.fulfill(json(myApplications));
+  });
 }
 
 export async function mockPublishCreationApis(
@@ -218,26 +226,51 @@ export async function mockRejectedPublishApis(
 ) {
   await mockShellApis(page);
 
+  let currentContent = { ...content };
+
   await page.route("**/api/publish/mine", async (route) => {
-    await route.fulfill(json([content]));
+    await route.fulfill(json([currentContent]));
   });
 
   await page.route(`**/api/hub/${String(content.id)}`, async (route) => {
     if (route.request().method() === "GET") {
-      await route.fulfill(json(content));
-      return;
-    }
-
-    if (route.request().method() === "PATCH") {
-      const body = route.request().postDataJSON();
-      await route.fulfill(json({ ...content, ...body, status: "REJECTED" }));
+      await route.fulfill(json(currentContent));
       return;
     }
 
     await route.fallback();
   });
 
+  await page.route(`**/api/publish/${String(content.id)}`, async (route) => {
+    if (route.request().method() === "PATCH") {
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      currentContent = {
+        ...currentContent,
+        ...body,
+        description:
+          typeof body?.description === "string"
+            ? body.description
+            : currentContent.description,
+        status: "REJECTED",
+      };
+      await route.fulfill(json(currentContent));
+      return;
+    }
+
+    await route.fallback();
+  });
+
+  await page.route(`**/api/publish/${String(content.id)}/draft`, async (route) => {
+    currentContent = {
+      ...currentContent,
+      status: "DRAFT",
+      rejectReason: null,
+    };
+    await route.fulfill(json(currentContent));
+  });
+
   await page.route(`**/api/publish/${String(content.id)}/submit`, async (route) => {
+    currentContent = { ...submitted };
     await route.fulfill(json(submitted));
   });
 }
@@ -296,15 +329,302 @@ export async function mockAdminReviewApis(
       };
     })
     .filter((item): item is MockUser => Boolean(item));
+  const allAuthors = [...derivedAuthors, ...authors];
+  const authorsById = new Map(
+    allAuthors.map((item) => [String(item.id ?? ""), item] as const),
+  );
 
-  await mockShellApis(page, { users: [...derivedAuthors, ...authors] });
+  await mockShellApis(page, { users: allAuthors });
+
+  const dashboardReviewItems = reviewItems.map((item) => {
+    const authorId = String(item.authorId ?? "");
+    const author = authorId ? authorsById.get(authorId) : undefined;
+
+    return {
+      ...item,
+      author: author
+        ? normalizeMockUser(authorId, author)
+        : authorId
+          ? normalizeMockUser(authorId)
+          : undefined,
+    };
+  });
+
+  const dashboardReports = reports.map((item) => {
+    const reporterId = String(item.reporterId ?? "");
+    const reporter = reporterId ? authorsById.get(reporterId) : undefined;
+    const normalizedReporter =
+      reporterId && reporter
+        ? normalizeMockUser(reporterId, reporter)
+        : reporterId
+          ? normalizeMockUser(reporterId)
+          : undefined;
+
+    return {
+      ...item,
+      reporter: normalizedReporter,
+      reporterName:
+        typeof item.reporterName === "string"
+          ? item.reporterName
+          : normalizedReporter?.name ?? "",
+    };
+  });
+
+  await page.route("**/api/admin/dashboard", async (route) => {
+    await route.fulfill(
+      json({
+        stats: {
+          pendingReviewCount: dashboardReviewItems.length,
+          pendingReportCount: dashboardReports.filter(
+            (item) => String(item.status ?? "PENDING") === "PENDING",
+          ).length,
+        },
+        reviewItems: dashboardReviewItems,
+        reports: dashboardReports,
+      }),
+    );
+  });
 
   await page.route("**/api/admin/review", async (route) => {
     await route.fulfill(json(reviewItems));
   });
 
   await page.route("**/api/admin/reports", async (route) => {
-    await route.fulfill(json(reports));
+    await route.fulfill(json(dashboardReports));
+  });
+
+  await page.route("**/api/admin/reports/*", async (route) => {
+    await route.fulfill(json({}));
+  });
+
+  await page.route("**/api/admin/review/*/approve", async (route) => {
+    await route.fulfill(json({}));
+  });
+
+  await page.route("**/api/admin/review/*/reject", async (route) => {
+    await route.fulfill(json({}));
+  });
+}
+
+export async function mockAdminHubApis(
+  page: Page,
+  {
+    items,
+    onUpdateHubItem,
+  }: {
+    items: Array<MockContent & { author?: MockUser }>;
+    onUpdateHubItem?: (contentId: string, body: Record<string, unknown>) => void;
+  },
+) {
+  const currentItems = items.map((item) => ({ ...item }));
+
+  const matchesContentQuery = (
+    item: MockContent & { author?: MockUser },
+    {
+      q,
+      status,
+      type,
+    }: {
+      q?: string;
+      status?: string;
+      type?: string;
+    },
+  ) => {
+    const normalizedQuery = q?.trim().toLowerCase();
+    const title = String(item.title ?? "").toLowerCase();
+    const description = String(item.description ?? "").toLowerCase();
+    const authorName = String(item.author?.name ?? "").toLowerCase();
+    const authorEmail = String(item.author?.email ?? "").toLowerCase();
+    const tags = Array.isArray(item.tags)
+      ? item.tags.map((tag) => String(tag).toLowerCase())
+      : [];
+
+    const matchesQuery =
+      !normalizedQuery ||
+      title.includes(normalizedQuery) ||
+      description.includes(normalizedQuery) ||
+      authorName.includes(normalizedQuery) ||
+      authorEmail.includes(normalizedQuery) ||
+      tags.some((tag) => tag.includes(normalizedQuery));
+
+    const matchesType = !type || String(item.type ?? "") === type;
+    const matchesStatus = !status || String(item.status ?? "") === status;
+
+    return matchesQuery && matchesType && matchesStatus;
+  };
+
+  const buildStats = (baseItems: Array<MockContent & { author?: MockUser }>) => ({
+    publishedCount: baseItems.filter(
+      (item) => String(item.status ?? "") === "PUBLISHED",
+    ).length,
+    pendingReviewCount: baseItems.filter(
+      (item) => String(item.status ?? "") === "PENDING_REVIEW",
+    ).length,
+    draftCount: baseItems.filter(
+      (item) => String(item.status ?? "") === "DRAFT",
+    ).length,
+    rejectedCount: baseItems.filter(
+      (item) => String(item.status ?? "") === "REJECTED",
+    ).length,
+  });
+
+  const buildResponse = (matchedItem: MockContent) => ({
+    item: matchedItem,
+    stats: buildStats(currentItems),
+  });
+
+  await mockShellApis(page, {
+    users: currentItems
+      .map((item) => item.author)
+      .filter((item): item is MockUser => Boolean(item)),
+  });
+
+  await page.route("**/api/admin/content-management**", async (route) => {
+    const url = new URL(route.request().url());
+    const q = url.searchParams.get("q") ?? undefined;
+    const type = url.searchParams.get("type") ?? undefined;
+    const status = url.searchParams.get("status") ?? undefined;
+    const baseItems = currentItems.filter((item) =>
+      matchesContentQuery(item, { q, type }),
+    );
+    const filteredItems = baseItems.filter((item) =>
+      matchesContentQuery(item, { q, type, status }),
+    );
+
+    await route.fulfill(
+      json({
+        stats: buildStats(baseItems),
+        items: filteredItems,
+      }),
+    );
+  });
+
+  await page.route("**/api/admin/content-management/*/approve", async (route) => {
+    const contentId = route.request().url().split("/").slice(-2, -1)[0] ?? "";
+    onUpdateHubItem?.(contentId, { status: "published" });
+    const matched = currentItems.find((item) => String(item.id ?? "") === contentId);
+    if (matched) {
+      matched.status = "PUBLISHED";
+      matched.rejectReason = undefined;
+    }
+    await route.fulfill(json(buildResponse(matched ?? { id: contentId, status: "PUBLISHED" })));
+  });
+
+  await page.route("**/api/admin/content-management/*/reject", async (route) => {
+    const contentId = route.request().url().split("/").slice(-2, -1)[0] ?? "";
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    onUpdateHubItem?.(contentId, body);
+    const matched = currentItems.find((item) => String(item.id ?? "") === contentId);
+    if (matched) {
+      matched.status = "REJECTED";
+      matched.rejectReason =
+        typeof body?.reason === "string" ? body.reason : matched.rejectReason;
+    }
+    await route.fulfill(
+      json(
+        buildResponse(
+          matched ?? {
+            id: contentId,
+            status: "REJECTED",
+            rejectReason: typeof body?.reason === "string" ? body.reason : undefined,
+          },
+        ),
+      ),
+    );
+  });
+
+  await page.route("**/api/admin/content-management/*/draft", async (route) => {
+    const contentId = route.request().url().split("/").slice(-2, -1)[0] ?? "";
+    onUpdateHubItem?.(contentId, { status: "draft" });
+    const matched = currentItems.find((item) => String(item.id ?? "") === contentId);
+    if (matched) {
+      matched.status = "DRAFT";
+    }
+    await route.fulfill(json(buildResponse(matched ?? { id: contentId, status: "DRAFT" })));
+  });
+
+  await page.route("**/api/admin/content-management/*", async (route) => {
+    if (new URL(route.request().url()).pathname.endsWith("/batch")) {
+      await route.fallback();
+      return;
+    }
+
+    const contentId = getUserIdFromUrl(route.request().url());
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    onUpdateHubItem?.(contentId, body);
+
+    const matched = currentItems.find((item) => String(item.id ?? "") === contentId);
+    if (matched) {
+      if (typeof body?.title === "string") {
+        matched.title = body.title;
+      }
+      if (typeof body?.description === "string") {
+        matched.description = body.description;
+      }
+      if (body?.status === "draft") {
+        matched.status = "DRAFT";
+      }
+      if (body?.status === "published") {
+        matched.status = "PUBLISHED";
+        matched.rejectReason = undefined;
+      }
+    }
+
+    await route.fulfill(
+      json(
+        buildResponse(
+          matched ?? {
+            id: contentId,
+            ...body,
+            description:
+              typeof body?.description === "string" ? body.description : undefined,
+          },
+        ),
+      ),
+    );
+  });
+
+  await page.route("**/api/admin/content-management/batch", async (route) => {
+    const body = route.request().postDataJSON() as {
+      ids?: string[];
+      action?: "approve" | "reject" | "draft";
+      reason?: string;
+    };
+    const ids = Array.isArray(body?.ids) ? body.ids.map((id) => String(id)) : [];
+
+    ids.forEach((contentId) => {
+      if (body?.action === "approve") {
+        onUpdateHubItem?.(contentId, { status: "published" });
+      } else if (body?.action === "draft") {
+        onUpdateHubItem?.(contentId, { status: "draft" });
+      } else if (body?.action === "reject") {
+        onUpdateHubItem?.(contentId, { reason: body.reason ?? "", status: "rejected" });
+      }
+
+      const matched = currentItems.find((item) => String(item.id ?? "") === contentId);
+      if (!matched) {
+        return;
+      }
+
+      if (body?.action === "approve") {
+        matched.status = "PUBLISHED";
+        matched.rejectReason = undefined;
+      } else if (body?.action === "draft") {
+        matched.status = "DRAFT";
+      } else if (body?.action === "reject") {
+        matched.status = "REJECTED";
+        matched.rejectReason =
+          typeof body?.reason === "string" ? body.reason : matched.rejectReason;
+      }
+    });
+
+    await route.fulfill(
+      json({
+        items: currentItems.filter((item) => ids.includes(String(item.id ?? ""))),
+        updatedIds: ids,
+        stats: buildStats(currentItems),
+      }),
+    );
   });
 
   await page.route("**/api/admin/review/*/approve", async (route) => {
@@ -340,6 +660,29 @@ export async function mockEnterpriseDashboardApis(
 ) {
   await mockShellApis(page, { conversations, requests, users: talent });
 
+  await page.route("**/api/enterprise/dashboard", async (route) => {
+    await route.fulfill(
+      json({
+        profile: {
+          aiStrategy: enterpriseProfile.aiStrategyText ?? "",
+          whatImDoing: enterpriseProfile.casesText ?? "",
+          whatImLookingFor: enterpriseProfile.achievementsText ?? "",
+        },
+        stats: {
+          recommendedExpertsCount: talent.length,
+          activeConversationsCount: conversations.length,
+          postedNeedsCount: myContents.length,
+          pendingInboundApplicationsCount: myApplications.filter(
+            (item) => String(item.status ?? "") === "SUBMITTED",
+          ).length,
+        },
+        recommendedExperts: talent,
+        myContents,
+        inboundApplications: myApplications,
+      }),
+    );
+  });
+
   await page.route("**/api/enterprise/me", async (route) => {
     if (route.request().method() === "GET") {
       await route.fulfill(json(enterpriseProfile));
@@ -363,8 +706,118 @@ export async function mockEnterpriseDashboardApis(
     await route.fulfill(json(myApplications));
   });
 
+  await page.route("**/api/applications/outbox", async (route) => {
+    await route.fulfill(json(myApplications));
+  });
+
   await page.route("**/api/hub**", async (route) => {
     await route.fulfill(json(hubItems));
+  });
+}
+
+export async function mockExpertDashboardApis(
+  page: Page,
+  {
+    myContents = [],
+    collaborationOpportunities = [],
+    inboundApplications = [],
+    enterpriseConnections = [],
+    onApplicationStatusUpdate,
+  }: {
+    myContents?: MockContent[];
+    collaborationOpportunities?: Array<MockContent & { author?: MockUser }>;
+    inboundApplications?: Array<MockContent & { applicant?: MockUser; targetContentTitle?: string }>;
+    enterpriseConnections?: MockUser[];
+    onApplicationStatusUpdate?: (appId: string, body: Record<string, string>) => void;
+  },
+) {
+  await mockShellApis(page, {
+    users: [
+      ...enterpriseConnections,
+      ...collaborationOpportunities
+        .map((item) => item.author)
+        .filter((item): item is MockUser => Boolean(item)),
+      ...inboundApplications
+        .map((item) => item.applicant)
+        .filter((item): item is MockUser => Boolean(item)),
+    ],
+  });
+
+  await page.route("**/api/expert/dashboard", async (route) => {
+    await route.fulfill(
+      json({
+        stats: {
+          totalContentCount: myContents.length,
+          totalViews: myContents.reduce((sum, item) => sum + Number(item.views ?? 0), 0),
+          totalLikes: myContents.reduce((sum, item) => sum + Number(item.likes ?? 0), 0),
+          pendingApplicantCount: inboundApplications.filter(
+            (item) => String(item.status ?? "") === "SUBMITTED",
+          ).length,
+        },
+        myContents,
+        collaborationOpportunities,
+        inboundApplications,
+        enterpriseConnections,
+      }),
+    );
+  });
+
+  await page.route("**/api/applications/*", async (route) => {
+    const appId = getUserIdFromUrl(route.request().url());
+    const body = route.request().postDataJSON() as Record<string, string>;
+    onApplicationStatusUpdate?.(appId, body);
+    await route.fulfill(json({}));
+  });
+}
+
+export async function mockLearnerDashboardApis(
+  page: Page,
+  {
+    dashboard,
+    onSubmitApplication,
+  }: {
+    dashboard: {
+      stats: {
+        publishedContentCount: number;
+        availableContentCount: number;
+        pendingReviewCount: number;
+        applicationCount: number;
+      };
+      learningResources: MockContent[];
+      projectOpportunities: MockContent[];
+      recommendedContents: MockContent[];
+      myContents: MockContent[];
+      applications: MockContent[];
+    };
+    onSubmitApplication?: (body: Record<string, unknown>) => void;
+  },
+) {
+  await mockShellApis(page);
+
+  await page.route("**/api/learner/dashboard", async (route) => {
+    await route.fulfill(json(dashboard));
+  });
+
+  await page.route("**/api/applications", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    onSubmitApplication?.(body);
+
+    await route.fulfill(
+      json({
+        id: "application-created-1",
+        applicantId: "u-learner-1",
+        targetType: body.targetType ?? "hub_project",
+        targetId: body.targetId ?? "",
+        message: body.message,
+        status: "submitted",
+        createdAt: new Date("2026-03-14T12:00:00.000Z").toISOString(),
+      }),
+    );
   });
 }
 

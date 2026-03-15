@@ -59,7 +59,7 @@ test.describe("publish", () => {
     await expect(page.getByText(/My Submissions \(1\)/)).toBeVisible();
   });
 
-  test("opens a rejected draft for revision", async ({ page }) => {
+  test("revises a rejected draft and re-submits it", async ({ page }) => {
     await seedAuth(page, USERS.learner);
     await installStrictApiMocking(page);
 
@@ -91,5 +91,15 @@ test.describe("publish", () => {
     await expect(page.getByText("Old Title")).toBeVisible();
     await page.getByText("Old Title").click();
     await expect(page.getByText("Needs more detail")).toBeVisible();
+
+    await page.getByTestId("publish-detail-edit-btn").click();
+    await page.getByTestId("publish-detail-title-input").fill("Updated Title");
+    await page.getByTestId("publish-detail-save-btn").click();
+    await expect(page.getByRole("heading", { name: "Updated Title" })).toBeVisible();
+
+    await page.getByTestId("publish-detail-save-draft-btn").click();
+    await page.getByTestId("publish-detail-submit-btn").click();
+
+    await expect(page.getByText("Needs more detail")).not.toBeVisible();
   });
 });

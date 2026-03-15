@@ -1,17 +1,68 @@
-import {
-  Injectable,
-  NotFoundException,
-  ForbiddenException,
-  BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { CreateHubItemDto, UpdateHubItemDto, QueryHubDto } from './hub.dto';
+import { QueryHubDto } from './hub.dto';
 import { Prisma } from '@prisma/client';
-import { serializeHubItem } from '../../common/serializers/serialize';
+import { normalizeContentTypeValue } from '../../common/contracts';
+import type { CurrentUserPayload } from '../../common/decorators/current-user.decorator';
+import {
+  serializeApplication,
+  serializeHubItem,
+  serializeUser,
+} from '../../common/serializers/serialize';
 
 @Injectable()
 export class HubService {
   constructor(private prisma: PrismaService) {}
+
+  private readonly authorInclude = {
+    profile: {
+      include: {
+        profileTags: {
+          include: {
+            tag: true,
+          },
+        },
+      },
+    },
+  } as const;
+
+  private async findItemOrThrow(id: string) {
+    const item = await this.prisma.hubItem.findUnique({
+      where: { id, deletedAt: null },
+      include: {
+        hubItemTags: { include: { tag: true } },
+        author: {
+          include: this.authorInclude,
+        },
+      },
+    });
+
+    if (!item) {
+      throw new NotFoundException('Hub item not found');
+    }
+
+    return item;
+  }
+
+  private assertCanView(item: { reviewStatus: string; authorUserId?: string | null }, viewer?: Pick<CurrentUserPayload, 'id' | 'role'>) {
+    const isAdmin = viewer?.role === 'ADMIN';
+    const isAuthor = !!viewer?.id && viewer.id === item.authorUserId;
+
+    if (item.reviewStatus !== 'published' && !isAdmin && !isAuthor) {
+      throw new NotFoundException('Hub item not found');
+    }
+  }
+
+  private bumpViews(id: string) {
+    this.prisma.hubItem
+      .update({
+        where: { id },
+        data: { viewsCount: { increment: 1 } },
+      })
+      .catch(() => {
+        // best-effort only
+      });
+  }
 
   async list(query: QueryHubDto, userRole?: string) {
     const { type, q, tags, page = 1, limit = 20 } = query;
@@ -21,17 +72,46 @@ export class HubService {
       deletedAt: null,
     };
 
-    // Non-admin users only see published items
     if (userRole !== 'ADMIN') {
       where.reviewStatus = 'published';
     }
 
-    if (type) where.type = type;
+    if (type) {
+      where.type = normalizeContentTypeValue(type).toLowerCase() as any;
+    }
 
-    if (q) {
+    if (q?.trim()) {
+      const keyword = q.trim();
       where.OR = [
-        { title: { contains: q, mode: 'insensitive' } },
-        { summary: { contains: q, mode: 'insensitive' } },
+        { title: { contains: keyword, mode: 'insensitive' } },
+        { summary: { contains: keyword, mode: 'insensitive' } },
+        {
+          hubItemTags: {
+            some: {
+              tag: {
+                name: { contains: keyword, mode: 'insensitive' },
+              },
+            },
+          },
+        },
+        {
+          author: {
+            is: {
+              email: { contains: keyword, mode: 'insensitive' },
+            },
+          },
+        },
+        {
+          author: {
+            is: {
+              profile: {
+                is: {
+                  displayName: { contains: keyword, mode: 'insensitive' },
+                },
+              },
+            },
+          },
+        },
       ];
     }
 
@@ -49,7 +129,9 @@ export class HubService {
         where,
         include: {
           hubItemTags: { include: { tag: true } },
-          author: { select: { id: true, role: true } },
+          author: {
+            include: this.authorInclude,
+          },
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -66,132 +148,98 @@ export class HubService {
     };
   }
 
-  async getById(id: string) {
-    const item = await this.prisma.hubItem.findUnique({
-      where: { id, deletedAt: null },
+  async getById(id: string, viewer?: Pick<CurrentUserPayload, 'id' | 'role'>) {
+    const item = await this.findItemOrThrow(id);
+    this.assertCanView(item, viewer);
+    this.bumpViews(id);
+    return item;
+  }
+
+  async getDetail(id: string, viewer?: Pick<CurrentUserPayload, 'id' | 'role'>) {
+    const item = await this.getById(id, viewer);
+    const content = serializeHubItem(item);
+    const author = item.author
+      ? serializeUser(item.author, { maskEmail: true })
+      : undefined;
+
+    const tagIds = item.hubItemTags
+      .map((hubItemTag) => hubItemTag.tagId)
+      .filter((tagId): tagId is string => typeof tagId === 'string' && tagId.length > 0);
+
+    const relatedItems = await this.prisma.hubItem.findMany({
+      where: {
+        deletedAt: null,
+        reviewStatus: 'published',
+        id: { not: item.id },
+        OR: [
+          { type: item.type },
+          ...(tagIds.length > 0
+            ? [
+                {
+                  hubItemTags: {
+                    some: {
+                      tagId: { in: tagIds },
+                    },
+                  },
+                },
+              ]
+            : []),
+        ],
+      },
       include: {
         hubItemTags: { include: { tag: true } },
         author: {
-          select: { id: true, role: true },
-          },
+          include: this.authorInclude,
+        },
       },
+      orderBy: [{ publishedAt: 'desc' }, { createdAt: 'desc' }],
+      take: 4,
     });
 
-    if (!item) throw new NotFoundException('Hub item not found');
+    const relatedContents = relatedItems.map(serializeHubItem);
 
-    // Increment view count (fire-and-forget)
-    this.prisma.hubItem.update({
-      where: { id },
-      data: { viewsCount: { increment: 1 } },
-    }).catch(() => { /* best-effort */ });
+    let viewerApplication = null as Record<string, unknown> | null;
+    const canApply =
+      viewer?.id &&
+      viewer.id !== content.authorId &&
+      (content.type === 'PROJECT' || content.type === 'CONTEST');
+
+    if (canApply) {
+      const application = await this.prisma.application.findUnique({
+        where: {
+          applicantUserId_targetType_targetId: {
+            applicantUserId: viewer.id,
+            targetType: 'hub_project',
+            targetId: item.id,
+          },
+        },
+      });
+
+      if (application) {
+        viewerApplication = {
+          ...serializeApplication(application),
+          target: {
+            id: content.id,
+            targetType: 'PROJECT',
+            contentType: content.type,
+            title: content.title,
+            status: content.status,
+            ownerId: content.authorId,
+          },
+          targetContentTitle: content.title,
+          ...(author ? { owner: author } : {}),
+        };
+      }
+    }
 
     return {
-      ...item,
-      tags: item.hubItemTags.map((ht) => ht.tag.name),
-      hubItemTags: undefined,
+      content,
+      author,
+      relatedContents,
+      viewerApplication,
     };
   }
 
-  async create(dto: CreateHubItemDto, userId: string) {
-    const { tags, ...data } = dto;
-
-    const item = await this.prisma.hubItem.create({
-      data: {
-        ...data,
-        authorUserId: userId,
-        reviewStatus: 'draft',
-      },
-    });
-
-    if (tags?.length) {
-      await this.syncTags(item.id, tags);
-    }
-
-    return this.getById(item.id);
-  }
-
-  async update(id: string, dto: UpdateHubItemDto, userId: string) {
-    const item = await this.prisma.hubItem.findUnique({
-      where: { id, deletedAt: null },
-    });
-
-    if (!item) throw new NotFoundException('Hub item not found');
-    if (item.authorUserId !== userId) {
-      throw new ForbiddenException('You can only edit your own items');
-    }
-    if (item.reviewStatus !== 'draft' && item.reviewStatus !== 'rejected') {
-      throw new BadRequestException('Only draft or rejected items can be edited');
-    }
-
-    const { tags, ...data } = dto;
-
-    await this.prisma.hubItem.update({
-      where: { id },
-      data,
-    });
-
-    if (tags !== undefined) {
-      await this.syncTags(id, tags);
-    }
-
-    return this.getById(id);
-  }
-
-  async submitForReview(id: string, userId: string) {
-    const item = await this.prisma.hubItem.findUnique({
-      where: { id, deletedAt: null },
-    });
-
-    if (!item) throw new NotFoundException('Hub item not found');
-    if (item.authorUserId !== userId) {
-      throw new ForbiddenException('You can only submit your own items');
-    }
-    if (item.reviewStatus !== 'draft' && item.reviewStatus !== 'rejected') {
-      throw new BadRequestException('Only draft or rejected items can be submitted for review');
-    }
-
-    await this.prisma.hubItem.update({
-      where: { id },
-      data: { reviewStatus: 'pending_review', rejectReason: null },
-    });
-
-    return this.getById(id);
-  }
-
-  /**
-   * List all items authored by a specific user (all statuses)
-   */
-  async listByAuthor(userId: string) {
-    const items = await this.prisma.hubItem.findMany({
-      where: { authorUserId: userId, deletedAt: null },
-      include: {
-        hubItemTags: { include: { tag: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-    return items;
-  }
-
-  async softDelete(id: string, userId: string, userRole: string) {
-    const item = await this.prisma.hubItem.findUnique({
-      where: { id, deletedAt: null },
-    });
-
-    if (!item) throw new NotFoundException('Hub item not found');
-    if (item.authorUserId !== userId && userRole !== 'ADMIN') {
-      throw new ForbiddenException('You can only delete your own items');
-    }
-
-    return this.prisma.hubItem.update({
-      where: { id },
-      data: { deletedAt: new Date() },
-    });
-  }
-
-  /**
-   * Toggle like on a hub item (simple increment/decrement without per-user tracking)
-   * Returns the new likes count.
-   */
   async toggleLike(id: string, _userId: string) {
     const item = await this.prisma.hubItem.findUnique({
       where: { id, deletedAt: null },
@@ -204,21 +252,5 @@ export class HubService {
       select: { likesCount: true },
     });
     return { likes: updated.likesCount };
-  }
-
-  private async syncTags(hubItemId: string, tagNames: string[]) {
-    await this.prisma.hubItemTag.deleteMany({ where: { hubItemId } });
-
-    for (const name of tagNames) {
-      const tag = await this.prisma.tag.upsert({
-        where: { name },
-        update: {},
-        create: { name },
-      });
-
-      await this.prisma.hubItemTag.create({
-        data: { hubItemId, tagId: tag.id },
-      });
-    }
   }
 }

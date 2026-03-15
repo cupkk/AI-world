@@ -21,17 +21,18 @@ import { usePageTitle } from "../lib/usePageTitle";
 import { useTranslation } from "../hooks/useTranslation";
 import { detectRecruitmentKeywords } from "../lib/recruitment";
 import {
-  fetchEnterpriseProfileByApi,
-  fetchMyPublishContentsByApi,
-  fetchTalentUsers,
-  fetchMyApplicationsByApi,
-  fetchMessageConversationsByApi,
+  fetchEnterpriseDashboardByApi,
   updateApplicationStatusByApi,
   createPublishDraftByApi,
   submitPublishByApi,
   updateEnterpriseProfileByApi,
 } from "../lib/api";
-import type { Content, Application, User as UserType, ChatThread } from "../types";
+import type {
+  Content,
+  EnterpriseDashboardApplication,
+  EnterpriseDashboardStats,
+  User as UserType,
+} from "../types";
 
 function mergeDefinedFields<T extends object>(base: T, patch: Partial<T>): T {
   const next = { ...base } as Record<string, unknown>;
@@ -48,10 +49,15 @@ export function DashboardEnterprise() {
   usePageTitle(t("page.dashboard"));
   const { user, updateUser } = useAuthStore();
 
-  const [users, setUsers] = useState<UserType[]>([]);
-  const [contents, setContents] = useState<Content[]>([]);
-  const [chatThreads, setChatThreads] = useState<ChatThread[]>([]);
-  const [applications, setApplications] = useState<Application[]>([]);
+  const [recommendedExperts, setRecommendedExperts] = useState<UserType[]>([]);
+  const [myContents, setMyContents] = useState<Content[]>([]);
+  const [inboundApplications, setInboundApplications] = useState<EnterpriseDashboardApplication[]>([]);
+  const [stats, setStats] = useState<EnterpriseDashboardStats>({
+    recommendedExpertsCount: 0,
+    activeConversationsCount: 0,
+    postedNeedsCount: 0,
+    pendingInboundApplicationsCount: 0,
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
 
@@ -70,44 +76,31 @@ export function DashboardEnterprise() {
     return detectRecruitmentKeywords(text);
   }, [needTitle, needDesc, needTags]);
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!user) return;
     setIsLoading(true);
     setHasError(false);
-    Promise.all([
-      fetchEnterpriseProfileByApi(),
-      fetchTalentUsers(),
-      fetchMyPublishContentsByApi(),
-      fetchMessageConversationsByApi(user.id, []),
-      fetchMyApplicationsByApi(),
-    ]).then(([enterpriseProfile, talent, mine, threads, apps]) => {
-      updateUser(mergeDefinedFields(user, enterpriseProfile));
-      setUsers(talent);
-      setContents(mine);
-      setChatThreads(threads);
-      setApplications(apps);
-    }).catch(() => {
+    try {
+      const dashboard = await fetchEnterpriseDashboardByApi();
+      updateUser(mergeDefinedFields(user, dashboard.profile));
+      setRecommendedExperts(dashboard.recommendedExperts);
+      setMyContents(dashboard.myContents);
+      setInboundApplications(dashboard.inboundApplications);
+      setStats(dashboard.stats);
+    } catch {
       setHasError(true);
-    }).finally(() => {
+    } finally {
       setIsLoading(false);
-    });
+    }
   };
 
   useEffect(() => {
-    loadData();
+    void loadData();
   }, [user?.id]);
 
   if (!user || user.role !== "ENTERPRISE_LEADER") return null;
   if (hasError) return <ErrorState onRetry={loadData} />;
   if (isLoading) return <LoadingSkeleton />;
-
-  const experts = users.filter((u) => u.role === "EXPERT").slice(0, 4);
-  const myContents = contents.filter((c) => c.authorId === user.id);
-  const myConversations = chatThreads.filter(t => t.participants.some(p => p.id === user.id) && t.status === "ACCEPTED");
-
-  // Get applications for my posted content (Inbound)
-  const myContentIds = myContents.map(c => c.id);
-  const inboundApplications = applications.filter(a => myContentIds.includes(a.targetId));
 
   return (
     <div className="space-y-8">
@@ -149,7 +142,7 @@ export function DashboardEnterprise() {
             <Users className="h-4 w-4 text-indigo-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-zinc-100">{experts.length}</div>
+            <div className="text-2xl font-bold text-zinc-100">{stats.recommendedExpertsCount}</div>
           </CardContent>
         </Card>
         <Card className="glass-panel">
@@ -160,7 +153,7 @@ export function DashboardEnterprise() {
             <MessageSquare className="h-4 w-4 text-indigo-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-zinc-100">{myConversations.length}</div>
+            <div className="text-2xl font-bold text-zinc-100">{stats.activeConversationsCount}</div>
           </CardContent>
         </Card>
         <Card className="glass-panel">
@@ -171,7 +164,7 @@ export function DashboardEnterprise() {
             <FileText className="h-4 w-4 text-indigo-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-zinc-100">{myContents.length}</div>
+            <div className="text-2xl font-bold text-zinc-100">{stats.postedNeedsCount}</div>
           </CardContent>
         </Card>
         <Card className="glass-panel">
@@ -182,7 +175,7 @@ export function DashboardEnterprise() {
             <Inbox className="h-4 w-4 text-indigo-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-zinc-100">{inboundApplications.filter(a => a.status === "SUBMITTED").length}</div>
+            <div className="text-2xl font-bold text-zinc-100">{stats.pendingInboundApplicationsCount}</div>
           </CardContent>
         </Card>
       </div>
@@ -304,9 +297,7 @@ export function DashboardEnterprise() {
           </CardHeader>
           <CardContent className="space-y-4">
             {inboundApplications.length > 0 ? inboundApplications.map((app) => {
-              const applicant = users.find(u => u.id === app.applicantId);
-              const targetContent = contents.find(c => c.id === app.targetId);
-              if (!applicant) return null;
+              const applicant = app.applicant;
               return (
                 <div key={app.id} className="border-b border-white/10 pb-4 last:border-0 last:pb-0">
                   <div className="flex items-center gap-3 mb-2">
@@ -318,7 +309,7 @@ export function DashboardEnterprise() {
                         </Link>
                         <Badge variant="secondary" className="text-[10px]">{formatRole(applicant.role)}</Badge>
                       </div>
-                      <p className="text-xs text-zinc-500 truncate">{t("dashboard.applied_to")} {targetContent?.title || t("hub.unknown")}</p>
+                      <p className="text-xs text-zinc-500 truncate">{t("dashboard.applied_to")} {app.targetContentTitle || t("hub.unknown")}</p>
                     </div>
                     <StatusBadge status={app.status === "SUBMITTED" ? "PENDING_REVIEW" : app.status === "ACCEPTED" ? "PUBLISHED" : "REJECTED"} />
                   </div>
@@ -328,11 +319,11 @@ export function DashboardEnterprise() {
                   {app.status === "SUBMITTED" && (
                     <div className="flex gap-2 ml-11">
                       <Button size="sm" variant="outline" className="h-7 text-xs gap-1 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
-                        onClick={async () => { try { await updateApplicationStatusByApi(app.id, "accepted"); setApplications(prev => prev.map(a => a.id === app.id ? { ...a, status: "ACCEPTED" } : a)); toast.success(t("dashboard.app_accepted")); } catch { toast.error(t("api.request_failed")); } }}>
+                        onClick={async () => { try { await updateApplicationStatusByApi(app.id, "accepted"); setInboundApplications(prev => prev.map(a => a.id === app.id ? { ...a, status: "ACCEPTED" } : a)); setStats(prev => ({ ...prev, pendingInboundApplicationsCount: Math.max(0, prev.pendingInboundApplicationsCount - 1) })); toast.success(t("dashboard.app_accepted")); } catch { toast.error(t("api.request_failed")); } }}>
                         <CheckCircle className="h-3 w-3" /> {t("dashboard.approve")}
                       </Button>
                       <Button size="sm" variant="outline" className="h-7 text-xs gap-1 border-red-500/30 text-red-400 hover:bg-red-500/10"
-                        onClick={async () => { try { await updateApplicationStatusByApi(app.id, "rejected"); setApplications(prev => prev.map(a => a.id === app.id ? { ...a, status: "REJECTED" } : a)); toast.error(t("dashboard.app_rejected")); } catch { toast.error(t("api.request_failed")); } }}>
+                        onClick={async () => { try { await updateApplicationStatusByApi(app.id, "rejected"); setInboundApplications(prev => prev.map(a => a.id === app.id ? { ...a, status: "REJECTED" } : a)); setStats(prev => ({ ...prev, pendingInboundApplicationsCount: Math.max(0, prev.pendingInboundApplicationsCount - 1) })); toast.error(t("dashboard.app_rejected")); } catch { toast.error(t("api.request_failed")); } }}>
                         <XCircle className="h-3 w-3" /> {t("dashboard.decline")}
                       </Button>
                       <Link to={`/messages?to=${applicant.id}`}>
@@ -413,9 +404,9 @@ export function DashboardEnterprise() {
                           visibility: "ALL",
                         });
                         await submitPublishByApi(draft.id);
-                        setContents(prev => [...prev, { ...draft, status: "PENDING_REVIEW" }]);
                         setShowPostForm(false);
                         setNeedTitle(""); setNeedDesc(""); setNeedTags("");
+                        await loadData();
                         toast.success(t("dashboard.toast_project_submitted"));
                       } catch (err: any) {
                         toast.error(err?.message || t("api.request_failed"));
@@ -464,7 +455,7 @@ export function DashboardEnterprise() {
             </Link>
           </CardHeader>
           <CardContent className="space-y-4">
-            {experts.map((expert) => (
+            {recommendedExperts.map((expert) => (
               <div
                 key={expert.id}
                 className="flex items-center justify-between border-b border-white/10 pb-4 last:border-0 last:pb-0"

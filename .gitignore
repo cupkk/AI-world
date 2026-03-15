@@ -9,3 +9,10 @@ coverage/
 playwright-report/
 playwright-report-live/
 test-results/
+server/backups/
+*.dump
+*.tgz
+*-cookie.txt
+*_cookie.txt
+hub_resp.txt
+test_output*.txt

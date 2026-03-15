@@ -2,11 +2,21 @@ import { Injectable, NotFoundException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { StorageService } from '../../common/storage/storage.service';
 import { UpdateProfileDto } from './profile.dto';
-import { serializeUser } from '../../common/serializers/serialize';
+import {
+  serializeHubItem,
+  serializeUser,
+} from '../../common/serializers/serialize';
 
 @Injectable()
 export class ProfileService {
   private readonly logger = new Logger(ProfileService.name);
+  private readonly userInclude = {
+    profile: {
+      include: {
+        profileTags: { include: { tag: true } },
+      },
+    },
+  } as const;
 
   constructor(
     private prisma: PrismaService,
@@ -19,11 +29,7 @@ export class ProfileService {
   async getUserById(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId, deletedAt: null },
-      include: {
-        profile: {
-          include: { profileTags: { include: { tag: true } } },
-        },
-      },
+      include: this.userInclude,
     });
 
     if (!user) throw new NotFoundException('User not found');
@@ -36,17 +42,69 @@ export class ProfileService {
   async getProfile(userId: string, requesterId?: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId, deletedAt: null },
-      include: {
-        profile: {
-          include: { profileTags: { include: { tag: true } } },
-        },
-      },
+      include: this.userInclude,
     });
 
     if (!user || !user.profile) throw new NotFoundException('Profile not found');
 
     const maskEmail = requesterId !== userId;
     return serializeUser(user, { maskEmail });
+  }
+
+  async getProfilePage(userId: string, requesterId?: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId, deletedAt: null },
+      include: this.userInclude,
+    });
+
+    if (!user || !user.profile) {
+      throw new NotFoundException('Profile not found');
+    }
+
+    const contents = await this.prisma.hubItem.findMany({
+      where: {
+        authorUserId: userId,
+        deletedAt: null,
+        reviewStatus: 'published',
+      },
+      include: {
+        hubItemTags: {
+          include: {
+            tag: true,
+          },
+        },
+      },
+      orderBy: [{ publishedAt: 'desc' }, { createdAt: 'desc' }],
+    });
+
+    const serializedContents = contents.map(serializeHubItem);
+    const contentTypeCounts = new Map<string, number>();
+
+    for (const item of serializedContents) {
+      contentTypeCounts.set(item.type, (contentTypeCounts.get(item.type) ?? 0) + 1);
+    }
+
+    const featuredTypes = Array.from(contentTypeCounts.entries())
+      .sort((left, right) => right[1] - left[1])
+      .map(([type]) => type)
+      .slice(0, 3);
+
+    return {
+      user: serializeUser(user, { maskEmail: requesterId !== userId }),
+      contents: serializedContents,
+      summary: {
+        publishedContentCount: serializedContents.length,
+        totalViews: serializedContents.reduce(
+          (sum, item) => sum + (item.views ?? 0),
+          0,
+        ),
+        totalLikes: serializedContents.reduce(
+          (sum, item) => sum + (item.likes ?? 0),
+          0,
+        ),
+        featuredTypes,
+      },
+    };
   }
 
   /**

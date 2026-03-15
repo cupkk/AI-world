@@ -1,9 +1,10 @@
 import { Module } from '@nestjs/common';
 import { PublishController } from './publish.controller';
-import { HubModule } from '../hub/hub.module';
+import { PublishService } from './publish.service';
 
 @Module({
-  imports: [HubModule],
   controllers: [PublishController],
+  providers: [PublishService],
+  exports: [PublishService],
 })
 export class PublishModule {}

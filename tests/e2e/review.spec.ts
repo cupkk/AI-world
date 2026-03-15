@@ -23,17 +23,61 @@ test.describe("review", () => {
           visibility: "ALL",
         },
       ],
+      authors: [
+        {
+          id: "author-1",
+          name: "Author One",
+          role: "LEARNER",
+        },
+      ],
     });
 
     await page.goto("/admin/review");
     await expect(
       page.getByRole("heading", { name: "Pending Paper" }),
     ).toBeVisible();
+    await expect(page.getByText("Author One")).toBeVisible();
 
     await page.getByTestId("review-approve-pending-1").click();
 
     await expect(
       page.getByRole("heading", { name: "Pending Paper" }),
     ).not.toBeVisible();
+  });
+
+  test("allows admins to resolve pending reports", async ({ page }) => {
+    await seedAuth(page, USERS.admin);
+    await installStrictApiMocking(page);
+    await mockAdminReviewApis(page, {
+      reviewItems: [],
+      reports: [
+        {
+          id: "report-1",
+          targetType: "user",
+          targetId: "reported-user-1",
+          reason: "Spam messages",
+          status: "PENDING",
+          reporterId: "reporter-1",
+          reporterName: "Reporter One",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      authors: [
+        {
+          id: "reporter-1",
+          name: "Reporter One",
+          role: "EXPERT",
+        },
+      ],
+    });
+
+    await page.goto("/admin/review");
+    await expect(page.getByText("Spam messages")).toBeVisible();
+
+    await page
+      .getByRole("button", { name: /Mark as Resolved|标记已处理/ })
+      .click();
+
+    await expect(page.getByText("Spam messages")).not.toBeVisible();
   });
 });

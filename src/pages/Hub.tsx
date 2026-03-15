@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useDeferredValue } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { useTranslation } from "../hooks/useTranslation";
@@ -10,8 +10,8 @@ import { PageHeader } from "../components/ui/PageHeader";
 import { EmptyState, ErrorState, LoadingCardGrid } from "../components/ui/StateDisplay";
 import { Plus, Search } from "lucide-react";
 import { usePageTitle } from "../lib/usePageTitle";
-import type { Content, User } from "../types";
-import { fetchHubContents, fetchUserByIdApi } from "../lib/api";
+import type { Content } from "../types";
+import { fetchHubContents } from "../lib/api";
 
 export function Hub() {
   const { t } = useTranslation();
@@ -22,11 +22,12 @@ export function Hub() {
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const [apiContents, setApiContents] = useState<Content[]>([]);
-  const [authorsById, setAuthorsById] = useState<Record<string, User>>({});
   const [searchTerm, setSearchTerm] = useState("");
   const initialType = searchParams.get("type") || "ALL";
   const [activeTab, setActiveTab] = useState(initialType);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [reloadToken, setReloadToken] = useState(0);
+  const deferredSearchTerm = useDeferredValue(searchTerm.trim());
 
   useEffect(() => {
     let active = true;
@@ -35,20 +36,13 @@ export function Hub() {
       setHasError(false);
       setIsLoading(true);
       try {
-        const result = await fetchHubContents();
+        const result = await fetchHubContents({
+          type: activeTab !== "ALL" ? activeTab : undefined,
+          q: deferredSearchTerm || undefined,
+          tags: selectedTags.length > 0 ? selectedTags : undefined,
+        });
         if (!active) return;
         setApiContents(result);
-        const authorIds = Array.from(new Set(result.map((item) => item.authorId).filter(Boolean)));
-        const authors = await Promise.all(
-          authorIds.map((authorId) => fetchUserByIdApi(authorId).catch(() => null)),
-        );
-        if (!active) return;
-        setAuthorsById(
-          authors.reduce<Record<string, User>>((acc, author) => {
-            if (author) acc[author.id] = author;
-            return acc;
-          }, {}),
-        );
       } catch (error) {
         if (!active) return;
         setApiContents([]);
@@ -65,36 +59,12 @@ export function Hub() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [activeTab, deferredSearchTerm, reloadToken, selectedTags]);
 
   const handleRetry = () => {
-    setHasError(false);
     setApiContents([]);
-    setAuthorsById({});
-    setIsLoading(true);
-    fetchHubContents()
-      .then((result) => {
-        setApiContents(result);
-        return Promise.all(
-          Array.from(new Set(result.map((item) => item.authorId).filter(Boolean))).map((authorId) =>
-            fetchUserByIdApi(authorId).catch(() => null),
-          ),
-        ).then((authors) => {
-          setAuthorsById(
-            authors.reduce<Record<string, User>>((acc, author) => {
-              if (author) acc[author.id] = author;
-              return acc;
-            }, {}),
-          );
-        });
-      })
-      .catch(() => {
-        setApiContents([]);
-        setHasError(true);
-      })
-      .finally(() => {
-        setIsLoading(false);
-      });
+    setHasError(false);
+    setReloadToken((current) => current + 1);
   };
 
   const TABS = [
@@ -115,43 +85,24 @@ export function Hub() {
     return Array.from(tags).sort();
   }, [apiContents]);
 
-  const publishedContents = useMemo(() => {
-    return apiContents.filter((c) => {
-      // Only published
-      if (c.status !== "PUBLISHED") return false;
+  const visibleContents = useMemo(
+    () =>
+      apiContents.filter((content) => {
+        if (content.status !== "PUBLISHED") {
+          return false;
+        }
 
-      // Visibility: EXPERTS_LEARNERS content hidden from enterprise leaders
-      if (
-        c.visibility === "EXPERTS_LEARNERS" &&
-        user?.role === "ENTERPRISE_LEADER"
-      ) {
-        return false;
-      }
+        if (
+          content.visibility === "EXPERTS_LEARNERS" &&
+          user?.role === "ENTERPRISE_LEADER"
+        ) {
+          return false;
+        }
 
-      // Search filter
-      if (
-        searchTerm &&
-        !c.title.toLowerCase().includes(searchTerm.toLowerCase()) &&
-        !c.description.toLowerCase().includes(searchTerm.toLowerCase()) &&
-        !c.tags.some((t) => t.toLowerCase().includes(searchTerm.toLowerCase()))
-      ) {
-        return false;
-      }
-
-      // Type filter
-      if (activeTab !== "ALL" && c.type !== activeTab) return false;
-
-      // Tag filter
-      if (
-        selectedTags.length > 0 &&
-        !selectedTags.some((tag) => c.tags.includes(tag))
-      ) {
-        return false;
-      }
-
-      return true;
-    });
-  }, [apiContents, searchTerm, activeTab, selectedTags, user?.role]);
+        return true;
+      }),
+    [apiContents, user?.role],
+  );
 
   return (
     <div className="space-y-6">
@@ -203,18 +154,15 @@ export function Hub() {
         <ErrorState onRetry={handleRetry} />
       ) : isLoading ? (
         <LoadingCardGrid count={6} />
-      ) : publishedContents.length > 0 ? (
+      ) : visibleContents.length > 0 ? (
         <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {publishedContents.map((content) => {
-            const author = authorsById[content.authorId];
-            return (
-              <ContentCard
-                key={content.id}
-                content={content}
-                author={author}
-              />
-            );
-          })}
+          {visibleContents.map((content) => (
+            <ContentCard
+              key={content.id}
+              content={content}
+              author={content.author}
+            />
+          ))}
         </div>
       ) : (
         <EmptyState

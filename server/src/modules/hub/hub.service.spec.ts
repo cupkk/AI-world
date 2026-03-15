@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { NotFoundException } from '@nestjs/common';
 import { HubService } from './hub.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
@@ -7,12 +7,12 @@ const mockPrisma = {
   hubItem: {
     findMany: jest.fn(),
     findUnique: jest.fn(),
-    create: jest.fn(),
     update: jest.fn(),
     count: jest.fn(),
   },
-  hubItemTag: { deleteMany: jest.fn(), create: jest.fn() },
-  tag: { upsert: jest.fn() },
+  application: {
+    findUnique: jest.fn(),
+  },
 };
 
 describe('HubService', () => {
@@ -38,7 +38,6 @@ describe('HubService', () => {
       const result = await service.list({ page: 1, limit: 10 }, 'LEARNER');
       expect(result.total).toBe(0);
 
-      // Verify published filter was applied
       const whereArg = mockPrisma.hubItem.findMany.mock.calls[0][0].where;
       expect(whereArg.reviewStatus).toBe('published');
     });
@@ -52,6 +51,98 @@ describe('HubService', () => {
       const whereArg = mockPrisma.hubItem.findMany.mock.calls[0][0].where;
       expect(whereArg.reviewStatus).toBeUndefined();
     });
+
+    it('should normalize type and search across tags and author profile', async () => {
+      mockPrisma.hubItem.findMany.mockResolvedValue([]);
+      mockPrisma.hubItem.count.mockResolvedValue(0);
+
+      await service.list(
+        { page: 1, limit: 10, type: 'PROJECT', q: 'policy' },
+        'LEARNER',
+      );
+
+      const whereArg = mockPrisma.hubItem.findMany.mock.calls[0][0].where;
+      expect(whereArg.type).toBe('project');
+      expect(whereArg.OR).toEqual(
+        expect.arrayContaining([
+          { title: { contains: 'policy', mode: 'insensitive' } },
+          { summary: { contains: 'policy', mode: 'insensitive' } },
+          {
+            hubItemTags: {
+              some: {
+                tag: {
+                  name: { contains: 'policy', mode: 'insensitive' },
+                },
+              },
+            },
+          },
+          {
+            author: {
+              is: {
+                email: { contains: 'policy', mode: 'insensitive' },
+              },
+            },
+          },
+          {
+            author: {
+              is: {
+                profile: {
+                  is: {
+                    displayName: {
+                      contains: 'policy',
+                      mode: 'insensitive',
+                    },
+                  },
+                },
+              },
+            },
+          },
+        ]),
+      );
+    });
+
+    it('should serialize author summary in hub items', async () => {
+      mockPrisma.hubItem.findMany.mockResolvedValue([
+        {
+          id: 'hub-1',
+          title: 'Policy Radar',
+          summary: 'Daily policy signals',
+          type: 'policy',
+          reviewStatus: 'published',
+          authorUserId: 'author-1',
+          createdAt: new Date('2026-03-14T10:00:00.000Z'),
+          hubItemTags: [{ tag: { name: 'Policy' } }],
+          likesCount: 3,
+          viewsCount: 7,
+          coverUrl: null,
+          rejectReason: null,
+          author: {
+            id: 'author-1',
+            email: 'author@example.com',
+            role: 'LEARNER',
+            profile: {
+              displayName: 'Author One',
+              avatarUrl: 'https://cdn.test/avatar.png',
+              headline: 'Policy analyst',
+              profileTags: [],
+            },
+          },
+        },
+      ]);
+      mockPrisma.hubItem.count.mockResolvedValue(1);
+
+      const result = await service.list({ page: 1, limit: 10 }, 'LEARNER');
+
+      expect(result.items[0]).toMatchObject({
+        id: 'hub-1',
+        author: {
+          id: 'author-1',
+          name: 'Author One',
+          role: 'LEARNER',
+          avatar: 'https://cdn.test/avatar.png',
+        },
+      });
+    });
   });
 
   describe('getById', () => {
@@ -61,112 +152,153 @@ describe('HubService', () => {
         NotFoundException,
       );
     });
-  });
 
-  describe('update', () => {
-    it('should reject editing non-own items', async () => {
+    it('should hide draft items from anonymous viewers', async () => {
       mockPrisma.hubItem.findUnique.mockResolvedValue({
-        id: 'h1',
-        authorUserId: 'other-user',
+        id: 'hub-draft',
         reviewStatus: 'draft',
-        deletedAt: null,
+        authorUserId: 'author-1',
+        hubItemTags: [],
+        author: null,
       });
 
-      await expect(
-        service.update('h1', { title: 'new' }, 'my-user'),
-      ).rejects.toThrow(ForbiddenException);
-    });
-
-    it('should reject editing non-draft items', async () => {
-      mockPrisma.hubItem.findUnique.mockResolvedValue({
-        id: 'h1',
-        authorUserId: 'u1',
-        reviewStatus: 'published',
-        deletedAt: null,
-      });
-
-      await expect(
-        service.update('h1', { title: 'new' }, 'u1'),
-      ).rejects.toThrow(BadRequestException);
-    });
-
-    it('should allow editing rejected items', async () => {
-      const existingItem = {
-        id: 'h1',
-        authorUserId: 'u1',
-        reviewStatus: 'rejected',
-        deletedAt: null,
-      };
-      mockPrisma.hubItem.findUnique
-        .mockResolvedValueOnce(existingItem)  // for update check
-        .mockResolvedValueOnce({              // for getById after update
-          ...existingItem,
-          title: 'fixed title',
-          hubItemTags: [],
-        });
-      mockPrisma.hubItem.update.mockResolvedValue({ ...existingItem, title: 'fixed title' });
-
-      const result = await service.update('h1', { title: 'fixed title' }, 'u1');
-      expect(result).toBeDefined();
-      expect(mockPrisma.hubItem.update).toHaveBeenCalled();
-    });
-  });
-
-  describe('submitForReview', () => {
-    it('should reject submitting non-draft items', async () => {
-      mockPrisma.hubItem.findUnique.mockResolvedValue({
-        id: 'h1',
-        authorUserId: 'u1',
-        reviewStatus: 'pending_review',
-        deletedAt: null,
-      });
-
-      await expect(service.submitForReview('h1', 'u1')).rejects.toThrow(
-        BadRequestException,
+      await expect(service.getById('hub-draft')).rejects.toThrow(
+        NotFoundException,
       );
     });
+  });
 
-    it('should allow re-submitting rejected items', async () => {
-      const rejectedItem = {
-        id: 'h1',
-        authorUserId: 'u1',
-        reviewStatus: 'rejected',
-        rejectReason: 'Needs improvement',
-        deletedAt: null,
-      };
-      mockPrisma.hubItem.findUnique
-        .mockResolvedValueOnce(rejectedItem)  // for submitForReview check
-        .mockResolvedValueOnce({              // for getById after submit
-          ...rejectedItem,
-          reviewStatus: 'pending_review',
-          rejectReason: null,
-          hubItemTags: [],
-        });
-      mockPrisma.hubItem.update.mockResolvedValue({
-        ...rejectedItem,
-        reviewStatus: 'pending_review',
-        rejectReason: null,
-      });
-
-      const result = await service.submitForReview('h1', 'u1');
-      expect(result).toBeDefined();
-      // Verify rejectReason is cleared
-      expect(mockPrisma.hubItem.update).toHaveBeenCalledWith({
-        where: { id: 'h1' },
-        data: { reviewStatus: 'pending_review', rejectReason: null },
-      });
-    });
-
-    it('should reject submitting published items', async () => {
+  describe('getDetail', () => {
+    it('should aggregate content, author, related items, and viewer application', async () => {
       mockPrisma.hubItem.findUnique.mockResolvedValue({
-        id: 'h1',
-        authorUserId: 'u1',
+        id: 'hub-1',
+        title: 'Policy Sprint',
+        summary: 'A practical policy workflow.',
+        type: 'project',
         reviewStatus: 'published',
-        deletedAt: null,
+        authorUserId: 'author-1',
+        createdAt: new Date('2026-03-14T10:00:00.000Z'),
+        publishedAt: new Date('2026-03-14T10:00:00.000Z'),
+        likesCount: 4,
+        viewsCount: 9,
+        coverUrl: null,
+        rejectReason: null,
+        hubItemTags: [
+          {
+            tagId: 'tag-1',
+            tag: { name: 'Policy' },
+          },
+        ],
+        author: {
+          id: 'author-1',
+          email: 'lead@example.com',
+          role: 'EXPERT',
+          profile: {
+            displayName: 'Research Lead',
+            avatarUrl: '',
+            headline: 'Policy expert',
+            emailVisibility: 'public',
+            profileTags: [],
+          },
+        },
+      });
+      mockPrisma.hubItem.findMany.mockResolvedValue([
+        {
+          id: 'hub-2',
+          title: 'Adjacent Paper',
+          summary: 'Related paper notes.',
+          type: 'paper',
+          reviewStatus: 'published',
+          authorUserId: 'author-2',
+          createdAt: new Date('2026-03-13T10:00:00.000Z'),
+          publishedAt: new Date('2026-03-13T10:00:00.000Z'),
+          likesCount: 1,
+          viewsCount: 3,
+          coverUrl: null,
+          rejectReason: null,
+          hubItemTags: [
+            {
+              tagId: 'tag-1',
+              tag: { name: 'Policy' },
+            },
+          ],
+          author: {
+            id: 'author-2',
+            email: 'paper@example.com',
+            role: 'LEARNER',
+            profile: {
+              displayName: 'Paper Curator',
+              avatarUrl: '',
+              headline: 'Curator',
+              emailVisibility: 'public',
+              profileTags: [],
+            },
+          },
+        },
+      ]);
+      mockPrisma.application.findUnique.mockResolvedValue({
+        id: 'app-1',
+        applicantUserId: 'viewer-1',
+        targetType: 'hub_project',
+        targetId: 'hub-1',
+        message: 'Interested in helping.',
+        status: 'submitted',
+        createdAt: new Date('2026-03-15T10:00:00.000Z'),
+      });
+      mockPrisma.hubItem.update.mockResolvedValue({ id: 'hub-1' });
+
+      const result = await service.getDetail('hub-1', {
+        id: 'viewer-1',
+        role: 'LEARNER',
       });
 
-      await expect(service.submitForReview('h1', 'u1')).rejects.toThrow(
-        BadRequestException,
+      expect(result).toMatchObject({
+        content: {
+          id: 'hub-1',
+          title: 'Policy Sprint',
+          type: 'PROJECT',
+        },
+        author: {
+          id: 'author-1',
+          name: 'Research Lead',
+        },
+        relatedContents: [
+          {
+            id: 'hub-2',
+            title: 'Adjacent Paper',
+          },
+        ],
+        viewerApplication: {
+          id: 'app-1',
+          target: {
+            id: 'hub-1',
+            targetType: 'PROJECT',
+          },
+          owner: {
+            id: 'author-1',
+          },
+        },
+      });
+
+      expect(mockPrisma.hubItem.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            reviewStatus: 'published',
+            id: { not: 'hub-1' },
+          }),
+          take: 4,
+        }),
+      );
+      expect(mockPrisma.application.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            applicantUserId_targetType_targetId: {
+              applicantUserId: 'viewer-1',
+              targetType: 'hub_project',
+              targetId: 'hub-1',
+            },
+          },
+        }),
       );
     });
   });
@@ -188,20 +320,6 @@ describe('HubService', () => {
       await expect(service.toggleLike('nonexistent', 'u1')).rejects.toThrow(
         NotFoundException,
       );
-    });
-  });
-
-  describe('softDelete', () => {
-    it('should reject deleting others items as non-admin', async () => {
-      mockPrisma.hubItem.findUnique.mockResolvedValue({
-        id: 'h1',
-        authorUserId: 'other',
-        deletedAt: null,
-      });
-
-      await expect(
-        service.softDelete('h1', 'me', 'LEARNER'),
-      ).rejects.toThrow(ForbiddenException);
     });
   });
 });

@@ -13,6 +13,7 @@ import { HubModule } from './modules/hub/hub.module';
 import { TalentModule } from './modules/talent/talent.module';
 import { EnterpriseModule } from './modules/enterprise/enterprise.module';
 import { ExpertModule } from './modules/expert/expert.module';
+import { LearnerModule } from './modules/learner/learner.module';
 import { ApplicationsModule } from './modules/applications/applications.module';
 import { MessagingModule } from './modules/messaging/messaging.module';
 import { KbModule } from './modules/kb/kb.module';
@@ -63,6 +64,7 @@ import { ActiveUserGuard } from './common/guards/active-user.guard';
     TalentModule,
     EnterpriseModule,
     ExpertModule,
+    LearnerModule,
     ApplicationsModule,
     MessagingModule,
     KbModule,

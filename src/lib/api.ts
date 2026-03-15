@@ -4,15 +4,29 @@
 };
 
 import type {
+  AdminDashboardData,
+  AdminHubBatchResult,
+  AdminHubData,
+  AdminHubMutationResult,
+  AdminReport,
   Application,
+  ApplicationAuditItem,
+  ApplicationInboxItem,
   ApplicationStatus,
+  ApplicationOutboxItem,
+  ApplicationTargetSummary,
   ApplicationTargetType,
   ChatThread,
   Content,
+  EnterpriseDashboardData,
+  ExpertDashboardData,
+  HubDetailData,
   InviteCode,
   InviteStatus,
   KnowledgeDocument,
+  LearnerDashboardData,
   Message,
+  ProfilePageData,
   PublicInviteSample,
   Role,
   ThreadStatus,
@@ -225,6 +239,7 @@ function normalizeContent(raw: any): Content {
         ? undefined
         : normalizeContentVisibilityValue(raw?.visibility),
     rejectReason: typeof raw?.rejectReason === "string" ? raw.rejectReason : undefined,
+    ...(raw?.author ? { author: normalizeUser(raw.author) } : {}),
   };
 }
 
@@ -344,12 +359,11 @@ export async function updatePublishContentByApi(
   contentId: string,
   updates: Partial<Pick<Content, "title" | "description" | "tags" | "type">>,
 ): Promise<Content> {
-  // Map frontend field names to backend DTO field names
   const { description, type, ...rest } = updates;
   const payload: Record<string, unknown> = { ...rest };
-  if (description !== undefined) payload.summary = description;
+  if (description !== undefined) payload.description = description;
   if (type !== undefined) payload.type = type.toLowerCase();
-  const response = await apiFetch(getApiPath(`/api/hub/${contentId}`), {
+  const response = await apiFetch(getApiPath(`/api/publish/${contentId}`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -357,6 +371,21 @@ export async function updatePublishContentByApi(
 
   if (!response.ok) {
     throw new Error(await parseApiError(response, "Update publish content"));
+  }
+
+  const json = await response.json();
+  const body = unwrap(json as ApiEnvelope<Content | { item?: Content }>);
+  const content = (body as any)?.item ?? body;
+  return normalizeContent(content);
+}
+
+export async function savePublishAsDraftByApi(contentId: string): Promise<Content> {
+  const response = await apiFetch(getApiPath(`/api/publish/${contentId}/draft`), {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Save publish draft"));
   }
 
   const json = await response.json();
@@ -391,6 +420,237 @@ export async function fetchAdminReviewQueueByApi(): Promise<Content[]> {
   return list.map((item) => normalizeContent(item));
 }
 
+function normalizeAdminDashboard(raw: any): AdminDashboardData {
+  const body = unwrap(raw as ApiEnvelope<any>) as any;
+  const stats = body?.stats ?? {};
+  const reviewItems = asArray<any>(body?.reviewItems).map((item) => ({
+    ...normalizeContent(item),
+    author: item?.author ? normalizeUser(item.author) : undefined,
+  }));
+  const reports = asArray<any>(body?.reports).map((item) => ({
+    id: String(item?.id ?? ""),
+    targetType: String(item?.targetType ?? ""),
+    targetId: String(item?.targetId ?? ""),
+    reason: String(item?.reason ?? ""),
+    status: String(item?.status ?? "PENDING"),
+    reporterId: String(item?.reporterId ?? ""),
+    reporterName:
+      typeof item?.reporterName === "string"
+        ? item.reporterName
+        : typeof item?.reporter?.name === "string"
+          ? item.reporter.name
+          : "",
+    createdAt: String(item?.createdAt ?? new Date().toISOString()),
+    reporter: item?.reporter ? normalizeUser(item.reporter) : undefined,
+  }));
+
+  return {
+    stats: {
+      pendingReviewCount: Number(stats?.pendingReviewCount ?? reviewItems.length),
+      pendingReportCount: Number(stats?.pendingReportCount ?? reports.length),
+    },
+    reviewItems,
+    reports,
+  };
+}
+
+export async function fetchAdminDashboardByApi(): Promise<AdminDashboardData> {
+  const response = await apiFetch(getApiPath("/api/admin/dashboard"));
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Fetch admin dashboard"));
+  }
+
+  const json = await response.json();
+  return normalizeAdminDashboard(json);
+}
+
+function normalizeAdminHubData(raw: any): AdminHubData {
+  const body = unwrap(raw as ApiEnvelope<any>) as any;
+  const stats = body?.stats ?? {};
+  const items = asArray<any>(body?.items).map((item) => ({
+    ...normalizeContent(item),
+    author: item?.author ? normalizeUser(item.author) : undefined,
+  }));
+
+  return {
+    stats: {
+      publishedCount: Number(stats?.publishedCount ?? 0),
+      pendingReviewCount: Number(stats?.pendingReviewCount ?? 0),
+      draftCount: Number(stats?.draftCount ?? 0),
+      rejectedCount: Number(stats?.rejectedCount ?? 0),
+    },
+    items,
+  };
+}
+
+function normalizeAdminHubMutationResult(raw: any): AdminHubMutationResult {
+  const body = unwrap(raw as ApiEnvelope<any>) as any;
+  const item = body?.item ?? {};
+  const stats = body?.stats ?? {};
+
+  return {
+    item: {
+      ...normalizeContent(item),
+      author: item?.author ? normalizeUser(item.author) : undefined,
+    },
+    stats: {
+      publishedCount: Number(stats?.publishedCount ?? 0),
+      pendingReviewCount: Number(stats?.pendingReviewCount ?? 0),
+      draftCount: Number(stats?.draftCount ?? 0),
+      rejectedCount: Number(stats?.rejectedCount ?? 0),
+    },
+  };
+}
+
+function normalizeAdminHubBatchResult(raw: any): AdminHubBatchResult {
+  const body = unwrap(raw as ApiEnvelope<any>) as any;
+  const stats = body?.stats ?? {};
+
+  return {
+    items: asArray<any>(body?.items).map((item) => ({
+      ...normalizeContent(item),
+      author: item?.author ? normalizeUser(item.author) : undefined,
+    })),
+    updatedIds: asArray<any>(body?.updatedIds).map((item) => String(item)),
+    stats: {
+      publishedCount: Number(stats?.publishedCount ?? 0),
+      pendingReviewCount: Number(stats?.pendingReviewCount ?? 0),
+      draftCount: Number(stats?.draftCount ?? 0),
+      rejectedCount: Number(stats?.rejectedCount ?? 0),
+    },
+  };
+}
+
+export type AdminHubQuery = {
+  q?: string;
+  status?: string;
+  type?: string;
+};
+
+export async function fetchAdminHubItemsByApi(
+  query?: AdminHubQuery,
+): Promise<AdminHubData> {
+  const params = toQueryString({
+    q: query?.q,
+    status: query?.status,
+    type: query?.type,
+  });
+  const response = await apiFetch(
+    getApiPath(`/api/admin/content-management${params}`),
+  );
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Fetch admin hub items"));
+  }
+
+  const json = await response.json();
+  return normalizeAdminHubData(json);
+}
+
+export type AdminUpdateHubItemPayload = {
+  title?: string;
+  description?: string;
+  status?: "published" | "draft";
+};
+
+export async function updateAdminHubItemByApi(
+  contentId: string,
+  payload: AdminUpdateHubItemPayload,
+): Promise<AdminHubMutationResult> {
+  const response = await apiFetch(getApiPath(`/api/admin/content-management/${contentId}`), {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Update admin hub item"));
+  }
+
+  const json = await response.json();
+  return normalizeAdminHubMutationResult(json);
+}
+
+export async function approveAdminHubItemByApi(
+  contentId: string,
+): Promise<AdminHubMutationResult> {
+  const response = await apiFetch(
+    getApiPath(`/api/admin/content-management/${contentId}/approve`),
+    {
+      method: "POST",
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Approve admin hub item"));
+  }
+
+  return normalizeAdminHubMutationResult(await response.json());
+}
+
+export async function rejectAdminHubItemByApi(
+  contentId: string,
+  reason: string,
+): Promise<AdminHubMutationResult> {
+  const response = await apiFetch(
+    getApiPath(`/api/admin/content-management/${contentId}/reject`),
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ reason }),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Reject admin hub item"));
+  }
+
+  return normalizeAdminHubMutationResult(await response.json());
+}
+
+export async function moveAdminHubItemToDraftByApi(
+  contentId: string,
+): Promise<AdminHubMutationResult> {
+  const response = await apiFetch(
+    getApiPath(`/api/admin/content-management/${contentId}/draft`),
+    {
+      method: "POST",
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Move admin hub item to draft"));
+  }
+
+  return normalizeAdminHubMutationResult(await response.json());
+}
+
+export async function batchUpdateAdminHubItemsByApi(payload: {
+  ids: string[];
+  action: "approve" | "reject" | "draft";
+  reason?: string;
+}): Promise<AdminHubBatchResult> {
+  const response = await apiFetch(
+    getApiPath("/api/admin/content-management/batch"),
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Batch update admin hub items"));
+  }
+
+  return normalizeAdminHubBatchResult(await response.json());
+}
+
 export async function approveAdminReviewByApi(contentId: string): Promise<void> {
   const response = await apiFetch(getApiPath(`/api/admin/review/${contentId}/approve`), {
     method: "POST",
@@ -414,17 +674,6 @@ export async function rejectAdminReviewByApi(contentId: string, reason: string):
     throw new Error(`Reject review failed: ${response.status}`);
   }
 }
-
-export type AdminReport = {
-  id: string;
-  targetType: string;
-  targetId: string;
-  reason: string;
-  status: string;
-  reporterId: string;
-  reporterName: string;
-  createdAt: string;
-};
 
 export async function fetchAdminReportsApi(): Promise<AdminReport[]> {
   const response = await apiFetch(getApiPath("/api/admin/reports"));
@@ -637,6 +886,36 @@ export async function fetchHubContentByIdApi(contentId: string): Promise<Content
   return normalizeContent(content);
 }
 
+function normalizeHubDetail(raw: any): HubDetailData {
+  const body = unwrap(raw as ApiEnvelope<any>) as any;
+  const content = normalizeContent(body?.content ?? body);
+  const author = body?.author
+    ? normalizeUser(body.author)
+    : content.author;
+  const relatedContents = asArray<any>(body?.relatedContents).map((item) =>
+    normalizeContent(item),
+  );
+  const viewerApplication = body?.viewerApplication
+    ? normalizeApplicationOutboxItem(body.viewerApplication)
+    : null;
+
+  return {
+    content,
+    author,
+    relatedContents,
+    viewerApplication,
+  };
+}
+
+export async function fetchHubDetailByApi(contentId: string): Promise<HubDetailData> {
+  const response = await apiFetch(getApiPath(`/api/hub/${contentId}/detail`));
+  if (!response.ok) {
+    throw new Error(`Fetch content detail failed: ${response.status}`);
+  }
+  const json = await response.json();
+  return normalizeHubDetail(json);
+}
+
 export async function likeHubContentByApi(contentId: string): Promise<{ likes: number }> {
   const response = await apiFetch(getApiPath(`/api/hub/${contentId}/like`), {
     method: "POST",
@@ -684,7 +963,7 @@ export type SubmitApplicationPayload = {
   message?: string;
 };
 
-function normalizeApplication(raw: any): import("../types").Application {
+function normalizeApplication(raw: any): Application {
   return {
     id: String(raw?.id ?? ""),
     applicantId: String(raw?.applicantId ?? raw?.applicantUserId ?? ""),
@@ -696,7 +975,58 @@ function normalizeApplication(raw: any): import("../types").Application {
   };
 }
 
-export async function submitApplicationByApi(payload: SubmitApplicationPayload): Promise<import("../types").Application> {
+function normalizeApplicationTarget(raw: any): ApplicationTargetSummary {
+  return {
+    id: String(raw?.id ?? ""),
+    targetType: normalizeApplicationTargetTypeValue(raw?.targetType),
+    contentType: normalizeContentTypeValue(raw?.contentType),
+    title: String(raw?.title ?? ""),
+    status:
+      raw?.status === undefined || raw?.status === null
+        ? undefined
+        : normalizeContentStatusValue(raw?.status),
+    ownerId: String(raw?.ownerId ?? ""),
+  };
+}
+
+function normalizeApplicationOutboxItem(raw: any): ApplicationOutboxItem {
+  return {
+    ...normalizeApplication(raw),
+    target: normalizeApplicationTarget(raw?.target ?? {}),
+    targetContentTitle:
+      typeof raw?.targetContentTitle === "string"
+        ? raw.targetContentTitle
+        : String(raw?.target?.title ?? ""),
+    owner: raw?.owner ? normalizeUser(raw.owner) : undefined,
+  };
+}
+
+function normalizeApplicationInboxItem(raw: any): ApplicationInboxItem {
+  return {
+    ...normalizeApplication(raw),
+    applicant: normalizeUser(raw?.applicant ?? {}),
+    target: normalizeApplicationTarget(raw?.target ?? {}),
+    targetContentTitle:
+      typeof raw?.targetContentTitle === "string"
+        ? raw.targetContentTitle
+        : String(raw?.target?.title ?? ""),
+  };
+}
+
+function normalizeApplicationAuditItem(raw: any): ApplicationAuditItem {
+  return {
+    ...normalizeApplication(raw),
+    applicant: normalizeUser(raw?.applicant ?? {}),
+    owner: raw?.owner ? normalizeUser(raw.owner) : undefined,
+    target: normalizeApplicationTarget(raw?.target ?? {}),
+    targetContentTitle:
+      typeof raw?.targetContentTitle === "string"
+        ? raw.targetContentTitle
+        : String(raw?.target?.title ?? ""),
+  };
+}
+
+export async function submitApplicationByApi(payload: SubmitApplicationPayload): Promise<Application> {
   const response = await apiFetch(getApiPath("/api/applications"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -713,7 +1043,40 @@ export async function submitApplicationByApi(payload: SubmitApplicationPayload):
   return normalizeApplication(body);
 }
 
-export async function fetchMyApplicationsByApi(): Promise<import("../types").Application[]> {
+export async function fetchApplicationOutboxByApi(): Promise<ApplicationOutboxItem[]> {
+  const response = await apiFetch(getApiPath("/api/applications/outbox"));
+  if (!response.ok) {
+    throw new Error(`Fetch application outbox failed: ${response.status}`);
+  }
+  const json = await response.json();
+  const body = unwrap(json as ApiEnvelope<any>);
+  const list = Array.isArray(body) ? body : asArray<any>((body as any)?.items);
+  return list.map(normalizeApplicationOutboxItem);
+}
+
+export async function fetchApplicationInboxByApi(): Promise<ApplicationInboxItem[]> {
+  const response = await apiFetch(getApiPath("/api/applications/inbox"));
+  if (!response.ok) {
+    throw new Error(`Fetch application inbox failed: ${response.status}`);
+  }
+  const json = await response.json();
+  const body = unwrap(json as ApiEnvelope<any>);
+  const list = Array.isArray(body) ? body : asArray<any>((body as any)?.items);
+  return list.map(normalizeApplicationInboxItem);
+}
+
+export async function fetchApplicationAuditByApi(): Promise<ApplicationAuditItem[]> {
+  const response = await apiFetch(getApiPath("/api/applications/audit"));
+  if (!response.ok) {
+    throw new Error(`Fetch application audit failed: ${response.status}`);
+  }
+  const json = await response.json();
+  const body = unwrap(json as ApiEnvelope<any>);
+  const list = Array.isArray(body) ? body : asArray<any>((body as any)?.items);
+  return list.map(normalizeApplicationAuditItem);
+}
+
+export async function fetchMyApplicationsByApi(): Promise<Application[]> {
   const response = await apiFetch(getApiPath("/api/applications/mine"));
   if (!response.ok) {
     throw new Error(`Fetch my applications failed: ${response.status}`);
@@ -746,6 +1109,32 @@ export async function fetchProfileByIdApi(userId: string): Promise<User> {
   const body = unwrap(json as ApiEnvelope<User | { user?: User }>);
   const user = (body as any)?.user ?? body;
   return normalizeUser(user);
+}
+
+function normalizeProfilePage(raw: any): ProfilePageData {
+  const body = unwrap(raw as ApiEnvelope<any>) as any;
+
+  return {
+    user: normalizeUser(body?.user ?? {}),
+    contents: asArray<any>(body?.contents).map((item) => normalizeContent(item)),
+    summary: {
+      publishedContentCount: Number(body?.summary?.publishedContentCount ?? 0),
+      totalViews: Number(body?.summary?.totalViews ?? 0),
+      totalLikes: Number(body?.summary?.totalLikes ?? 0),
+      featuredTypes: asArray<any>(body?.summary?.featuredTypes).map((item) =>
+        normalizeContentTypeValue(item),
+      ),
+    },
+  };
+}
+
+export async function fetchProfilePageByApi(userId: string): Promise<ProfilePageData> {
+  const response = await apiFetch(getApiPath(`/api/profiles/${userId}/page`));
+  if (!response.ok) {
+    throw new Error(`Fetch profile page failed: ${response.status}`);
+  }
+  const json = await response.json();
+  return normalizeProfilePage(json);
 }
 
 export async function verifyInviteCodeByApi(code: string): Promise<InviteCode | null> {
@@ -1073,6 +1462,54 @@ export async function uploadKnowledgeBaseFile(file: File): Promise<KnowledgeBase
 
 type EnterpriseProfileResponse = Pick<User, "aiStrategy" | "whatImDoing" | "whatImLookingFor">;
 
+function normalizeEnterpriseDashboard(raw: any): EnterpriseDashboardData {
+  const body = unwrap(raw as ApiEnvelope<any>) as any;
+  const profile = body?.profile ?? {};
+  const stats = body?.stats ?? {};
+  const recommendedExperts = asArray<any>(body?.recommendedExperts).map((item) =>
+    normalizeUser(item),
+  );
+  const myContents = asArray<any>(body?.myContents).map((item) =>
+    normalizeContent(item),
+  );
+  const inboundApplications = asArray<any>(body?.inboundApplications).map(
+    normalizeApplicationInboxItem,
+  );
+
+  return {
+    profile: {
+      aiStrategy:
+        typeof profile?.aiStrategy === "string" ? profile.aiStrategy : "",
+      whatImDoing:
+        typeof profile?.whatImDoing === "string" ? profile.whatImDoing : "",
+      whatImLookingFor:
+        typeof profile?.whatImLookingFor === "string"
+          ? profile.whatImLookingFor
+          : "",
+    },
+    stats: {
+      recommendedExpertsCount: Number(stats?.recommendedExpertsCount ?? 0),
+      activeConversationsCount: Number(stats?.activeConversationsCount ?? 0),
+      postedNeedsCount: Number(stats?.postedNeedsCount ?? 0),
+      pendingInboundApplicationsCount: Number(
+        stats?.pendingInboundApplicationsCount ?? 0,
+      ),
+    },
+    recommendedExperts,
+    myContents,
+    inboundApplications,
+  };
+}
+
+export async function fetchEnterpriseDashboardByApi(): Promise<EnterpriseDashboardData> {
+  const response = await apiFetch(getApiPath("/api/enterprise/dashboard"));
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Fetch enterprise dashboard"));
+  }
+  const json = await response.json();
+  return normalizeEnterpriseDashboard(json);
+}
+
 export async function fetchEnterpriseProfileByApi(): Promise<EnterpriseProfileResponse> {
   const response = await apiFetch(getApiPath("/api/enterprise/me"));
   if (!response.ok) throw new Error(await parseApiError(response, "Fetch enterprise profile"));
@@ -1197,6 +1634,86 @@ export async function fetchEnterpriseNeedApplicationsByApi(needId: string): Prom
 }
 
 // ---- Expert ----
+
+function normalizeExpertDashboard(raw: any): ExpertDashboardData {
+  const body = unwrap(raw as ApiEnvelope<any>) as any;
+  const stats = body?.stats ?? {};
+  const myContents = asArray<any>(body?.myContents).map((item) =>
+    normalizeContent(item),
+  );
+  const collaborationOpportunities = asArray<any>(
+    body?.collaborationOpportunities,
+  ).map((item) => ({
+    ...normalizeContent(item),
+    author: normalizeUser(item?.author ?? {}),
+  }));
+  const inboundApplications = asArray<any>(body?.inboundApplications).map(
+    normalizeApplicationInboxItem,
+  );
+  const enterpriseConnections = asArray<any>(body?.enterpriseConnections).map((item) =>
+    normalizeUser(item),
+  );
+
+  return {
+    stats: {
+      totalContentCount: Number(stats?.totalContentCount ?? 0),
+      totalViews: Number(stats?.totalViews ?? 0),
+      totalLikes: Number(stats?.totalLikes ?? 0),
+      pendingApplicantCount: Number(stats?.pendingApplicantCount ?? 0),
+    },
+    myContents,
+    collaborationOpportunities,
+    inboundApplications,
+    enterpriseConnections,
+  };
+}
+
+export async function fetchExpertDashboardByApi(): Promise<ExpertDashboardData> {
+  const response = await apiFetch(getApiPath("/api/expert/dashboard"));
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Fetch expert dashboard"));
+  }
+  const json = await response.json();
+  return normalizeExpertDashboard(json);
+}
+
+function normalizeLearnerDashboard(raw: any): LearnerDashboardData {
+  const body = unwrap(raw as ApiEnvelope<any>) as any;
+  const stats = body?.stats ?? {};
+
+  return {
+    stats: {
+      publishedContentCount: Number(stats?.publishedContentCount ?? 0),
+      availableContentCount: Number(stats?.availableContentCount ?? 0),
+      pendingReviewCount: Number(stats?.pendingReviewCount ?? 0),
+      applicationCount: Number(stats?.applicationCount ?? 0),
+    },
+    learningResources: asArray<any>(body?.learningResources).map((item) =>
+      normalizeContent(item),
+    ),
+    projectOpportunities: asArray<any>(body?.projectOpportunities).map((item) =>
+      normalizeContent(item),
+    ),
+    recommendedContents: asArray<any>(body?.recommendedContents).map((item) =>
+      normalizeContent(item),
+    ),
+    myContents: asArray<any>(body?.myContents).map((item) =>
+      normalizeContent(item),
+    ),
+    applications: asArray<any>(body?.applications).map(
+      normalizeApplicationOutboxItem,
+    ),
+  };
+}
+
+export async function fetchLearnerDashboardByApi(): Promise<LearnerDashboardData> {
+  const response = await apiFetch(getApiPath("/api/learner/dashboard"));
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Fetch learner dashboard"));
+  }
+  const json = await response.json();
+  return normalizeLearnerDashboard(json);
+}
 
 export type CreateResearchProjectPayload = {
   title: string;
@@ -1338,23 +1855,17 @@ export async function adminUpdateUserStatusByApi(userId: string, status: string)
 // ---- Hub (additional) ----
 
 export async function createHubContentByApi(payload: PublishDraftPayload): Promise<Content> {
-  const response = await apiFetch(getApiPath("/api/hub"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) throw new Error(await parseApiError(response, "Create hub content"));
-  const json = await response.json();
-  return normalizeContent(unwrap(json));
+  return createPublishDraftByApi(payload);
 }
 
 export async function submitHubContentByApi(contentId: string): Promise<void> {
-  const response = await apiFetch(getApiPath(`/api/hub/${contentId}/submit`), { method: "POST" });
-  if (!response.ok) throw new Error(await parseApiError(response, "Submit hub content"));
+  await submitPublishByApi(contentId);
 }
 
 export async function deleteHubContentByApi(contentId: string): Promise<void> {
-  const response = await apiFetch(getApiPath(`/api/hub/${contentId}`), { method: "DELETE" });
+  const response = await apiFetch(getApiPath(`/api/publish/${contentId}`), {
+    method: "DELETE",
+  });
   if (!response.ok) throw new Error(await parseApiError(response, "Delete hub content"));
 }
 

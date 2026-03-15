@@ -76,6 +76,7 @@ export interface Content {
   coverImage?: string;
   visibility?: ContentVisibility;
   rejectReason?: string;
+  author?: User;
 }
 
 export type DocumentStatus = (typeof DOCUMENT_STATUS_VALUES)[number];
@@ -149,6 +150,162 @@ export interface Application {
   message?: string;
   status: ApplicationStatus;
   createdAt: string;
+}
+
+export interface ApplicationTargetSummary {
+  id: string;
+  targetType: ApplicationTargetType;
+  contentType: ContentType;
+  title: string;
+  status?: ContentStatus;
+  ownerId: string;
+}
+
+export interface ApplicationOutboxItem extends Application {
+  target: ApplicationTargetSummary;
+  targetContentTitle: string;
+  owner?: User;
+}
+
+export interface ApplicationInboxItem extends Application {
+  applicant: User;
+  target: ApplicationTargetSummary;
+  targetContentTitle: string;
+}
+
+export interface ApplicationAuditItem extends Application {
+  applicant: User;
+  owner?: User;
+  target: ApplicationTargetSummary;
+  targetContentTitle: string;
+}
+
+export interface HubDetailData {
+  content: Content;
+  author?: User;
+  relatedContents: Content[];
+  viewerApplication?: ApplicationOutboxItem | null;
+}
+
+export interface ProfilePageSummary {
+  publishedContentCount: number;
+  totalViews: number;
+  totalLikes: number;
+  featuredTypes: ContentType[];
+}
+
+export interface ProfilePageData {
+  user: User;
+  contents: Content[];
+  summary: ProfilePageSummary;
+}
+
+export interface EnterpriseDashboardStats {
+  recommendedExpertsCount: number;
+  activeConversationsCount: number;
+  postedNeedsCount: number;
+  pendingInboundApplicationsCount: number;
+}
+
+export type EnterpriseDashboardApplication = ApplicationInboxItem;
+
+export interface EnterpriseDashboardData {
+  profile: Pick<User, "aiStrategy" | "whatImDoing" | "whatImLookingFor">;
+  stats: EnterpriseDashboardStats;
+  recommendedExperts: User[];
+  myContents: Content[];
+  inboundApplications: EnterpriseDashboardApplication[];
+}
+
+export interface ExpertDashboardStats {
+  totalContentCount: number;
+  totalViews: number;
+  totalLikes: number;
+  pendingApplicantCount: number;
+}
+
+export type ExpertDashboardApplication = ApplicationInboxItem;
+
+export interface ExpertDashboardOpportunity extends Content {
+  author: User;
+}
+
+export interface ExpertDashboardData {
+  stats: ExpertDashboardStats;
+  myContents: Content[];
+  collaborationOpportunities: ExpertDashboardOpportunity[];
+  inboundApplications: ExpertDashboardApplication[];
+  enterpriseConnections: User[];
+}
+
+export interface LearnerDashboardStats {
+  publishedContentCount: number;
+  availableContentCount: number;
+  pendingReviewCount: number;
+  applicationCount: number;
+}
+
+export interface LearnerDashboardData {
+  stats: LearnerDashboardStats;
+  learningResources: Content[];
+  projectOpportunities: Content[];
+  recommendedContents: Content[];
+  myContents: Content[];
+  applications: ApplicationOutboxItem[];
+}
+
+export interface AdminReviewDashboardItem extends Content {
+  author?: User;
+}
+
+export interface AdminReport {
+  id: string;
+  targetType: string;
+  targetId: string;
+  reason: string;
+  status: string;
+  reporterId: string;
+  reporterName: string;
+  createdAt: string;
+  reporter?: User;
+}
+
+export interface AdminDashboardStats {
+  pendingReviewCount: number;
+  pendingReportCount: number;
+}
+
+export interface AdminDashboardData {
+  stats: AdminDashboardStats;
+  reviewItems: AdminReviewDashboardItem[];
+  reports: AdminReport[];
+}
+
+export interface AdminHubItem extends Content {
+  author?: User;
+}
+
+export interface AdminHubStats {
+  publishedCount: number;
+  pendingReviewCount: number;
+  draftCount: number;
+  rejectedCount: number;
+}
+
+export interface AdminHubData {
+  stats: AdminHubStats;
+  items: AdminHubItem[];
+}
+
+export interface AdminHubMutationResult {
+  item: AdminHubItem;
+  stats: AdminHubStats;
+}
+
+export interface AdminHubBatchResult {
+  items: AdminHubItem[];
+  updatedIds: string[];
+  stats: AdminHubStats;
 }
 
 // Learning resources for Learner dashboard

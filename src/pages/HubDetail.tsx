@@ -9,21 +9,16 @@ import { Avatar } from "../components/ui/Avatar";
 import { Input } from "../components/ui/Input";
 import { EmptyState, LoadingSkeleton } from "../components/ui/StateDisplay";
 import {
-  fetchHubContentByIdApi,
-  fetchHubContents,
-  fetchProfileByIdApi,
+  fetchHubDetailByApi,
   submitApplicationByApi,
-  fetchMyApplicationsByApi,
 } from "../lib/api";
-import type { User, Content, Application } from "../types";
+import type { ApplicationOutboxItem, HubDetailData } from "../types";
 import {
   ArrowLeft,
   Calendar,
   Eye,
   Heart,
   Tag,
-  User as UserIcon,
-  MapPin,
   Share2,
   MessageSquare,
   Send,
@@ -43,32 +38,15 @@ export function HubDetail() {
   const [showApplyForm, setShowApplyForm] = useState(false);
   const [applyMessage, setApplyMessage] = useState("");
 
-  const [content, setContent] = useState<Content | null>(null);
-  const [author, setAuthor] = useState<User | null>(null);
-  const [applications, setApplications] = useState<Application[]>([]);
-  const [relatedContents, setRelatedContents] = useState<Content[]>([]);
+  const [detail, setDetail] = useState<HubDetailData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    fetchHubContentByIdApi(id)
-      .then(async (c) => {
-        setContent(c);
-        // Fetch author and related in parallel
-        const [authorData, allContents, myApps] = await Promise.all([
-          fetchProfileByIdApi(c.authorId).catch(() => null),
-          fetchHubContents().then(list =>
-            list.filter(item => item.id !== c.id && item.status === "PUBLISHED" && (item.type === c.type || item.tags.some(t => c.tags.includes(t))))
-              .slice(0, 4)
-          ).catch(() => []),
-          currentUser ? fetchMyApplicationsByApi().catch(() => []) : Promise.resolve([]),
-        ]);
-        setAuthor(authorData);
-        setRelatedContents(allContents);
-        setApplications(myApps);
-      })
-      .catch(() => setContent(null))
+    fetchHubDetailByApi(id)
+      .then((nextDetail) => setDetail(nextDetail))
+      .catch(() => setDetail(null))
       .finally(() => setLoading(false));
   }, [id, currentUser?.id]);
 
@@ -80,7 +58,7 @@ export function HubDetail() {
     );
   }
 
-  if (!content) {
+  if (!detail?.content) {
     return (
       <EmptyState
         title={t("hub_detail.content_not_found")}
@@ -89,6 +67,11 @@ export function HubDetail() {
       />
     );
   }
+
+  const content = detail.content;
+  const author = detail.author ?? content.author ?? null;
+  const relatedContents = detail.relatedContents;
+  const viewerApplication = detail.viewerApplication ?? null;
 
   // Visibility check
   if (
@@ -121,7 +104,7 @@ export function HubDetail() {
 
   // Application logic for PROJECT/CONTEST
   const isApplicable = (content.type === "PROJECT" || content.type === "CONTEST") && currentUser && currentUser.id !== content.authorId;
-  const hasApplied = currentUser ? applications.some(a => a.applicantId === currentUser.id && a.targetId === content.id) : false;
+  const hasApplied = Boolean(viewerApplication);
 
   const getTypeLabel = (type: string) => {
     switch (type) {
@@ -148,7 +131,27 @@ export function HubDetail() {
         targetId: content.id,
         message: applyMessage || undefined,
       });
-      setApplications(prev => [...prev, app]);
+      const nextViewerApplication: ApplicationOutboxItem = {
+        ...app,
+        target: {
+          id: content.id,
+          targetType: app.targetType,
+          contentType: content.type,
+          title: content.title,
+          status: content.status,
+          ownerId: content.authorId,
+        },
+        targetContentTitle: content.title,
+        ...(author ? { owner: author } : {}),
+      };
+      setDetail((prev) =>
+        prev
+          ? {
+              ...prev,
+              viewerApplication: nextViewerApplication,
+            }
+          : prev,
+      );
       toast.success(t("hub_detail.application_submitted_success"));
     } catch (err: any) {
       toast.error(err?.message || t("api.request_failed"));

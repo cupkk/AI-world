@@ -28,7 +28,12 @@ import { toast } from "sonner";
 import type { Content, ContentType } from "../types";
 import { usePageTitle } from "../lib/usePageTitle";
 import { useTranslation } from "../hooks/useTranslation";
-import { submitPublishByApi, fetchHubContentByIdApi, updatePublishContentByApi } from "../lib/api";
+import {
+  fetchHubContentByIdApi,
+  savePublishAsDraftByApi,
+  submitPublishByApi,
+  updatePublishContentByApi,
+} from "../lib/api";
 
 export function PublishDetail() {
   const { t, language } = useTranslation();
@@ -154,8 +159,8 @@ export function PublishDetail() {
     if (content.status === "REJECTED") {
       setIsSaving(true);
       try {
-        const updated = await updatePublishContentByApi(content.id, {});
-        setContent({ ...updated, status: "DRAFT" });
+        const updated = await savePublishAsDraftByApi(content.id);
+        setContent(updated);
       } catch {
         // best-effort: update local state even if API fails
         setContent({ ...content, status: "DRAFT" });
@@ -196,13 +201,20 @@ export function PublishDetail() {
               size="sm"
               className="gap-2"
               onClick={() => setIsEditing(true)}
+              data-testid="publish-detail-edit-btn"
             >
               <Edit3 className="h-4 w-4" />
               {t("pub_detail.edit")}
             </Button>
           )}
           {canSubmit && !isEditing && (
-            <Button size="sm" className="gap-2" onClick={handleSubmit} disabled={isSaving}>
+            <Button
+              size="sm"
+              className="gap-2"
+              onClick={handleSubmit}
+              disabled={isSaving}
+              data-testid="publish-detail-submit-btn"
+            >
               {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               {t("pub_detail.submit_for_review")}
             </Button>
@@ -242,6 +254,7 @@ export function PublishDetail() {
                     setEditTitle(e.target.value)
                   }
                   placeholder={t("pub_detail.title")}
+                  data-testid="publish-detail-title-input"
                 />
               </div>
               <div>
@@ -285,7 +298,7 @@ export function PublishDetail() {
                 />
               </div>
               <div className="flex items-center gap-2 pt-2">
-                <Button onClick={handleSave} size="sm" disabled={isSaving}>
+                <Button onClick={handleSave} size="sm" disabled={isSaving} data-testid="publish-detail-save-btn">
                   {isSaving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
                   {t("pub_detail.save_changes")}
                 </Button>
@@ -363,6 +376,7 @@ export function PublishDetail() {
                   size="sm"
                   className="gap-2"
                   onClick={handleSaveAsDraft}
+                  data-testid="publish-detail-save-draft-btn"
                 >
                   {t("pub_detail.save_draft")}
                 </Button>

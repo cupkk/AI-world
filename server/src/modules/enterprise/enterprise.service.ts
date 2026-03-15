@@ -7,6 +7,11 @@ import {
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { UpdateEnterpriseProfileDto, CreateNeedDto, QueryNeedsDto } from './enterprise.dto';
 import { Prisma } from '@prisma/client';
+import {
+  serializeHubItem,
+  serializeUser,
+} from '../../common/serializers/serialize';
+import { ApplicationsService } from '../applications/applications.service';
 
 // Recruitment keyword blocklist
 const RECRUITMENT_KEYWORDS = [
@@ -16,7 +21,85 @@ const RECRUITMENT_KEYWORDS = [
 
 @Injectable()
 export class EnterpriseService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private applicationsService: ApplicationsService,
+  ) {}
+
+  async getDashboard(userId: string) {
+    const expertWhere: Prisma.UserWhereInput = {
+      role: 'EXPERT',
+      status: 'active',
+      deletedAt: null,
+    };
+
+    const [profile, expertCount, recommendedExperts, myContents, activeConversationsCount] =
+      await Promise.all([
+        this.prisma.enterpriseProfile.findUnique({
+          where: { userId },
+        }),
+        this.prisma.user.count({ where: expertWhere }),
+        this.prisma.user.findMany({
+          where: expertWhere,
+          include: {
+            profile: {
+              include: {
+                profileTags: { include: { tag: true } },
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 4,
+        }),
+        this.prisma.hubItem.findMany({
+          where: {
+            authorUserId: userId,
+            deletedAt: null,
+          },
+          include: {
+            hubItemTags: { include: { tag: true } },
+            author: {
+              select: { id: true, role: true },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.conversationMember.count({
+          where: { userId },
+        }),
+      ]);
+
+    const serializedInboundApplications =
+      myContents.length > 0
+        ? await this.applicationsService.listForTargets(
+            myContents.map((item) => ({
+              targetType: 'hub_project',
+              targetId: item.id,
+            })),
+          )
+        : [];
+
+    return {
+      profile: {
+        aiStrategy: profile?.aiStrategyText ?? '',
+        whatImDoing: profile?.casesText ?? '',
+        whatImLookingFor: profile?.achievementsText ?? '',
+      },
+      stats: {
+        recommendedExpertsCount: expertCount,
+        activeConversationsCount,
+        postedNeedsCount: myContents.length,
+        pendingInboundApplicationsCount: serializedInboundApplications.filter(
+          (app) => app.status === 'SUBMITTED',
+        ).length,
+      },
+      recommendedExperts: recommendedExperts.map((expert) =>
+        serializeUser(expert, { maskEmail: true }),
+      ),
+      myContents: myContents.map((item) => serializeHubItem(item)),
+      inboundApplications: serializedInboundApplications,
+    };
+  }
 
   async getMyProfile(userId: string) {
     const profile = await this.prisma.enterpriseProfile.findUnique({
@@ -135,15 +218,9 @@ export class EnterpriseService {
     if (!need) throw new NotFoundException();
     if (need.enterpriseUserId !== userId) throw new ForbiddenException();
 
-    return this.prisma.application.findMany({
-      where: { targetType: 'enterprise_need', targetId: id },
-      include: {
-        applicant: {
-          select: { id: true, email: true, role: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    return this.applicationsService.listForTargets([
+      { targetType: 'enterprise_need', targetId: id },
+    ]);
   }
 
   private checkRecruitmentContent(text: string) {

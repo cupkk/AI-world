@@ -1,28 +1,42 @@
 import {
+  Body,
   Controller,
   Get,
-  Post,
-  Patch,
   Param,
-  Body,
+  Patch,
+  Post,
   Query,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { AdminService } from './admin.service';
+import { ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
+import {
+  IsArray,
+  IsEnum,
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 import { CurrentUser, CurrentUserPayload } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { IsString, IsOptional, IsNumber, IsEnum } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { serializeHubItem, serializeEnterpriseNeed, serializeResearchProject, SerializedContent } from '../../common/serializers/serialize';
-import { CreateHubItemDto } from '../hub/hub.dto';
+import { SerializedContent, serializeHubItem } from '../../common/serializers/serialize';
+import { CreatePublishItemDto } from '../publish/publish.dto';
+import { AdminService } from './admin.service';
 
 class RejectReasonDto {
-  @ApiProperty() @IsString() reason: string;
+  @ApiProperty()
+  @IsString()
+  reason: string;
 }
 
 class GenerateInvitesDto {
-  @ApiProperty() @IsNumber() count: number;
-  @ApiPropertyOptional() @IsOptional() @IsNumber() expiresInDays?: number;
+  @ApiProperty()
+  @IsNumber()
+  count: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  expiresInDays?: number;
 }
 
 class UpdateUserStatusDto {
@@ -42,22 +56,77 @@ class HandleReportDto {
   notes?: string;
 }
 
+class UpdateHubItemDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  title?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  description?: string;
+
+  @ApiPropertyOptional({ enum: ['published', 'draft'] })
+  @IsOptional()
+  @IsEnum(['published', 'draft'])
+  status?: 'published' | 'draft';
+}
+
+class QueryContentManagementDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  q?: string;
+
+  @ApiPropertyOptional({ enum: ['DRAFT', 'PENDING_REVIEW', 'PUBLISHED', 'REJECTED'] })
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @ApiPropertyOptional({ enum: ['CONTEST', 'PAPER', 'POLICY', 'PROJECT', 'TOOL'] })
+  @IsOptional()
+  @IsString()
+  type?: string;
+}
+
+class BatchContentManagementDto {
+  @ApiProperty({ type: [String] })
+  @IsArray()
+  @IsString({ each: true })
+  ids: string[];
+
+  @ApiProperty({ enum: ['approve', 'reject', 'draft'] })
+  @IsString()
+  @IsIn(['approve', 'reject', 'draft'])
+  action: 'approve' | 'reject' | 'draft';
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
 @ApiTags('Admin')
 @Controller('admin')
 @Roles('ADMIN')
 export class AdminController {
   constructor(private readonly service: AdminService) {}
 
-  /** GET /api/admin/review — frontend uses this path */
+  @Get('dashboard')
+  @ApiOperation({ summary: 'Admin review dashboard data' })
+  async getDashboard() {
+    return this.service.getDashboard();
+  }
+
   @Get('review')
-  @ApiOperation({ summary: '待审核列表' })
+  @ApiOperation({ summary: 'List review queue items' })
   async getReviewQueue(@Query('type') type?: string): Promise<SerializedContent[]> {
     return this.service.getReviewQueue(type);
   }
 
-  /** POST /api/admin/review/:id/approve — auto-detect reviewType */
   @Post('review/:id/approve')
-  @ApiOperation({ summary: '批准（自动识别类型）' })
+  @ApiOperation({ summary: 'Approve a review target' })
   async approve(
     @Param('id') id: string,
     @CurrentUser() user: CurrentUserPayload,
@@ -67,9 +136,8 @@ export class AdminController {
     return { success: true };
   }
 
-  /** POST /api/admin/review/:id/reject — body has only { reason } */
   @Post('review/:id/reject')
-  @ApiOperation({ summary: '驳回（带 reason，自动识别类型）' })
+  @ApiOperation({ summary: 'Reject a review target with reason' })
   async reject(
     @Param('id') id: string,
     @Body() dto: RejectReasonDto,
@@ -81,17 +149,95 @@ export class AdminController {
   }
 
   @Post('hub-items')
-  @ApiOperation({ summary: '管理员直接创建并发布内容' })
+  @ApiOperation({ summary: 'Create and publish a hub item as admin' })
   async createHubItem(
-    @Body() dto: CreateHubItemDto,
+    @Body() dto: CreatePublishItemDto,
     @CurrentUser() user: CurrentUserPayload,
   ) {
     const item = await this.service.createHubItem(dto, user.id);
     return serializeHubItem(item);
   }
 
+  @Get('hub-items')
+  @ApiOperation({ summary: 'List hub items for admin management' })
+  async listHubItems(@Query() query: QueryContentManagementDto) {
+    return this.service.listHubItems(query);
+  }
+
+  @Get('content-management')
+  @ApiOperation({ summary: 'Aggregated data for admin content management' })
+  async getContentManagement(@Query() query: QueryContentManagementDto) {
+    return this.service.getContentManagement(query);
+  }
+
+  @Patch('hub-items/:id')
+  @ApiOperation({ summary: 'Update a hub item as admin' })
+  async updateHubItem(
+    @Param('id') id: string,
+    @Body() dto: UpdateHubItemDto,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.service.updateHubItem(id, dto, user.id);
+  }
+
+  @Patch('content-management/:id')
+  @ApiOperation({ summary: 'Update a hub item through admin content management' })
+  async updateContentManagementItem(
+    @Param('id') id: string,
+    @Body() dto: UpdateHubItemDto,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.service.updateContentManagementItem(id, dto, user.id);
+  }
+
+  @Post('content-management/:id/approve')
+  @ApiOperation({ summary: 'Approve pending hub content from admin content management' })
+  async approveContentManagementItem(
+    @Param('id') id: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.service.approveContentManagementItem(id, user.id);
+  }
+
+  @Post('content-management/:id/reject')
+  @ApiOperation({ summary: 'Reject pending hub content from admin content management' })
+  async rejectContentManagementItem(
+    @Param('id') id: string,
+    @Body() dto: RejectReasonDto,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.service.rejectContentManagementItem(
+      id,
+      dto.reason,
+      user.id,
+    );
+  }
+
+  @Post('content-management/:id/draft')
+  @ApiOperation({ summary: 'Move published hub content back to draft from admin content management' })
+  async moveContentManagementItemToDraft(
+    @Param('id') id: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.service.moveContentManagementItemToDraft(id, user.id);
+  }
+
+  @Post('content-management/batch')
+  @ApiOperation({ summary: 'Batch update hub content from admin content management' })
+  async batchUpdateContentManagementItems(
+    @Body() dto: BatchContentManagementDto,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.service.batchUpdateContentManagementItems(
+      dto.ids,
+      dto.action,
+      user.id,
+      dto.reason,
+    );
+  }
+
   @Post('invites')
-  @ApiOperation({ summary: '生成邀请码' })
+  @ApiOperation({ summary: 'Generate invite codes' })
   async generateInvites(
     @Body() dto: GenerateInvitesDto,
     @CurrentUser() user: CurrentUserPayload,
@@ -100,7 +246,7 @@ export class AdminController {
   }
 
   @Patch('users/:id/status')
-  @ApiOperation({ summary: '管理用户状态' })
+  @ApiOperation({ summary: 'Update a user account status' })
   async updateUserStatus(
     @Param('id') id: string,
     @Body() dto: UpdateUserStatusDto,
@@ -110,23 +256,13 @@ export class AdminController {
   }
 
   @Get('reports')
-  @ApiOperation({ summary: '待处理举报列表' })
+  @ApiOperation({ summary: 'List pending reports' })
   async listReports() {
-    const reports = await this.service.listPendingReports();
-    return reports.map((r: any) => ({
-      id: r.id,
-      targetType: r.targetType,
-      targetId: r.targetId,
-      reason: r.reason,
-      status: r.status?.toUpperCase?.() ?? 'PENDING',
-      reporterId: r.reporterId,
-      reporterName: r.reporter?.displayName ?? r.reporter?.email ?? '',
-      createdAt: r.createdAt?.toISOString?.() ?? String(r.createdAt ?? ''),
-    }));
+    return this.service.listPendingReports();
   }
 
   @Patch('reports/:id')
-  @ApiOperation({ summary: '处理举报' })
+  @ApiOperation({ summary: 'Handle a report' })
   async handleReport(
     @Param('id') id: string,
     @Body() dto: HandleReportDto,

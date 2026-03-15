@@ -11,6 +11,13 @@ import { CreateResearchProjectDto } from './expert.dto';
 export class ExpertController {
   constructor(private readonly service: ExpertService) {}
 
+  @Get('dashboard')
+  @Roles('EXPERT')
+  @ApiOperation({ summary: 'Get expert dashboard data' })
+  async getDashboard(@CurrentUser() user: CurrentUserPayload) {
+    return this.service.getDashboard(user.id);
+  }
+
   @Post('research-projects')
   @Roles('EXPERT')
   @ActiveOnly()

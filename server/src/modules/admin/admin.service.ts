@@ -4,17 +4,91 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import {
+  normalizeContentStatusValue,
+  normalizeContentTypeValue,
+} from '../../common/contracts';
 import {
   serializeHubItem,
   serializeEnterpriseNeed,
   serializeResearchProject,
   SerializedContent,
+  SerializedUser,
+  serializeUser,
 } from '../../common/serializers/serialize';
+
+export interface AdminDashboardReviewItem extends SerializedContent {
+  author?: SerializedUser;
+}
+
+export interface AdminDashboardReport {
+  id: string;
+  targetType: string;
+  targetId: string;
+  reason: string;
+  status: string;
+  reporterId: string;
+  reporterName: string;
+  createdAt: string;
+  reporter?: SerializedUser;
+}
+
+export interface AdminDashboardData {
+  stats: {
+    pendingReviewCount: number;
+    pendingReportCount: number;
+  };
+  reviewItems: AdminDashboardReviewItem[];
+  reports: AdminDashboardReport[];
+}
+
+export interface AdminHubManagementItem extends SerializedContent {
+  author?: SerializedUser;
+}
+
+export interface AdminHubManagementData {
+  stats: {
+    publishedCount: number;
+    pendingReviewCount: number;
+    draftCount: number;
+    rejectedCount: number;
+  };
+  items: AdminHubManagementItem[];
+}
+
+export interface AdminHubManagementMutationResult {
+  item: AdminHubManagementItem;
+  stats: AdminHubManagementData['stats'];
+}
+
+export interface AdminHubManagementBatchResult {
+  items: AdminHubManagementItem[];
+  updatedIds: string[];
+  stats: AdminHubManagementData['stats'];
+}
+
+export interface AdminHubManagementQuery {
+  q?: string;
+  status?: string;
+  type?: string;
+}
 
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
+  private readonly reviewUserInclude = {
+    profile: {
+      include: {
+        profileTags: {
+          include: {
+            tag: true,
+          },
+        },
+      },
+    },
+  } as const;
 
   constructor(private prisma: PrismaService) {}
 
@@ -92,6 +166,247 @@ export class AdminService {
     }
 
     return results;
+  }
+
+  async getDashboard(): Promise<AdminDashboardData> {
+    const [hubItems, needs, projects, users, reports] = await Promise.all([
+      this.prisma.hubItem.findMany({
+        where: { reviewStatus: 'pending_review', deletedAt: null },
+        include: {
+          author: {
+            include: this.reviewUserInclude,
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.enterpriseNeed.findMany({
+        where: { reviewStatus: 'pending_review', deletedAt: null },
+        include: {
+          enterprise: {
+            include: this.reviewUserInclude,
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.researchProject.findMany({
+        where: { reviewStatus: 'pending_review', deletedAt: null },
+        include: {
+          expert: {
+            include: this.reviewUserInclude,
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.user.findMany({
+        where: { status: 'pending_identity_review', deletedAt: null },
+        include: {
+          profile: {
+            include: {
+              profileTags: {
+                include: {
+                  tag: true,
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.report.findMany({
+        where: { status: 'pending' },
+        include: {
+          reporter: {
+            include: this.reviewUserInclude,
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const reviewItems: AdminDashboardReviewItem[] = [
+      ...hubItems.map((item) => ({
+        ...serializeHubItem(item),
+        author: item.author ? this.serializeReviewAuthor(item.author) : undefined,
+      })),
+      ...needs.map((item) => ({
+        ...serializeEnterpriseNeed(item),
+        author: item.enterprise
+          ? this.serializeReviewAuthor(item.enterprise)
+          : undefined,
+      })),
+      ...projects.map((item) => ({
+        ...serializeResearchProject(item),
+        author: item.expert ? this.serializeReviewAuthor(item.expert) : undefined,
+      })),
+      ...users.map((user) => ({
+        id: user.id,
+        title: user.profile?.displayName ?? user.email,
+        description: 'Identity review',
+        type: 'USER_IDENTITY',
+        status: 'PENDING_REVIEW',
+        authorId: user.id,
+        createdAt: user.createdAt?.toISOString?.() ?? String(user.createdAt ?? ''),
+        tags: [] as string[],
+        likes: 0,
+        views: 0,
+        author: this.serializeReviewAuthor(user),
+      })),
+    ].sort(
+      (left, right) =>
+        new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+    );
+
+    const serializedReports = reports.map((report) =>
+      this.serializeDashboardReport(report),
+    );
+
+    return {
+      stats: {
+        pendingReviewCount: reviewItems.length,
+        pendingReportCount: serializedReports.length,
+      },
+      reviewItems,
+      reports: serializedReports,
+    };
+  }
+
+  async listHubItems(
+    query: AdminHubManagementQuery = {},
+  ): Promise<AdminHubManagementData> {
+    const baseWhere = this.buildContentManagementWhere(query, false);
+    const filteredWhere = this.buildContentManagementWhere(query, true);
+
+    const [statRows, hubItems] = await Promise.all([
+      this.prisma.hubItem.findMany({
+        where: baseWhere,
+        select: {
+          reviewStatus: true,
+        },
+      }),
+      this.prisma.hubItem.findMany({
+      where: filteredWhere,
+      include: {
+        hubItemTags: {
+          include: {
+            tag: true,
+          },
+        },
+        author: {
+          include: this.reviewUserInclude,
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const items = hubItems.map((item) => ({
+      ...serializeHubItem(item),
+      author: item.author ? this.serializeReviewAuthor(item.author) : undefined,
+    }));
+
+    return {
+      stats: {
+        publishedCount: statRows.filter(
+          (item) => item.reviewStatus === 'published',
+        ).length,
+        pendingReviewCount: statRows.filter(
+          (item) => item.reviewStatus === 'pending_review',
+        ).length,
+        draftCount: statRows.filter((item) => item.reviewStatus === 'draft')
+          .length,
+        rejectedCount: statRows.filter(
+          (item) => item.reviewStatus === 'rejected',
+        ).length,
+      },
+      items,
+    };
+  }
+
+  async getContentManagement(
+    query: AdminHubManagementQuery = {},
+  ): Promise<AdminHubManagementData> {
+    return this.listHubItems(query);
+  }
+
+  async updateContentManagementItem(
+    hubItemId: string,
+    data: {
+      title?: string;
+      description?: string;
+      status?: 'published' | 'draft';
+    },
+    adminId: string,
+  ): Promise<AdminHubManagementMutationResult> {
+    const item = await this.updateHubItem(hubItemId, data, adminId);
+    return this.buildContentManagementMutation(hubItemId, item);
+  }
+
+  async approveContentManagementItem(
+    hubItemId: string,
+    adminId: string,
+  ): Promise<AdminHubManagementMutationResult> {
+    await this.approve(hubItemId, 'hub_item', adminId);
+    return this.buildContentManagementMutation(hubItemId);
+  }
+
+  async rejectContentManagementItem(
+    hubItemId: string,
+    reason: string,
+    adminId: string,
+  ): Promise<AdminHubManagementMutationResult> {
+    await this.reject(hubItemId, 'hub_item', reason, adminId);
+    return this.buildContentManagementMutation(hubItemId);
+  }
+
+  async moveContentManagementItemToDraft(
+    hubItemId: string,
+    adminId: string,
+  ): Promise<AdminHubManagementMutationResult> {
+    return this.updateContentManagementItem(
+      hubItemId,
+      { status: 'draft' },
+      adminId,
+    );
+  }
+
+  async batchUpdateContentManagementItems(
+    ids: string[],
+    action: 'approve' | 'reject' | 'draft',
+    adminId: string,
+    reason?: string,
+  ): Promise<AdminHubManagementBatchResult> {
+    const updatedIds = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+
+    if (updatedIds.length === 0) {
+      throw new BadRequestException('No content ids provided');
+    }
+
+    for (const id of updatedIds) {
+      if (action === 'approve') {
+        await this.approve(id, 'hub_item', adminId);
+        continue;
+      }
+
+      if (action === 'reject') {
+        await this.reject(
+          id,
+          'hub_item',
+          reason?.trim() || 'No reason provided',
+          adminId,
+        );
+        continue;
+      }
+
+      await this.updateHubItem(id, { status: 'draft' }, adminId);
+    }
+
+    const snapshot = await this.listHubItems();
+
+    return {
+      items: snapshot.items.filter((item) => updatedIds.includes(item.id)),
+      updatedIds,
+      stats: snapshot.stats,
+    };
   }
 
   async approve(id: string, reviewType: string, adminId: string) {
@@ -204,6 +519,78 @@ export class AdminService {
     return item;
   }
 
+  async updateHubItem(
+    hubItemId: string,
+    data: {
+      title?: string;
+      description?: string;
+      status?: 'published' | 'draft';
+    },
+    adminId: string,
+  ) {
+    const existing = await this.prisma.hubItem.findFirst({
+      where: { id: hubItemId, deletedAt: null },
+    });
+
+    if (!existing) {
+      throw new NotFoundException('Hub item not found');
+    }
+
+    const updateData: Record<string, unknown> = {};
+    if (typeof data.title === 'string') {
+      updateData.title = data.title;
+    }
+    if (typeof data.description === 'string') {
+      updateData.summary = data.description;
+    }
+    if (data.status === 'published') {
+      updateData.reviewStatus = 'published';
+      updateData.publishedAt = existing.publishedAt ?? new Date();
+    }
+    if (data.status === 'draft') {
+      updateData.reviewStatus = 'draft';
+      updateData.publishedAt = null;
+    }
+
+    if (Object.keys(updateData).length === 0) {
+      throw new BadRequestException('No update fields provided');
+    }
+
+    const item = await this.prisma.hubItem.update({
+      where: { id: hubItemId },
+      data: updateData,
+      include: {
+        hubItemTags: {
+          include: {
+            tag: true,
+          },
+        },
+        author: {
+          include: this.reviewUserInclude,
+        },
+      },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorId: adminId,
+        action: 'update_hub_item',
+        targetType: 'hub_item',
+        targetId: hubItemId,
+        metadata: {
+          title: data.title ?? null,
+          description: data.description ?? null,
+          status: data.status ?? null,
+        },
+      },
+    });
+
+    return {
+      ...serializeHubItem(item),
+      author: item.author ? this.serializeReviewAuthor(item.author) : undefined,
+    };
+  }
+
   async generateInviteCodes(count: number, adminId: string, expiresInDays?: number) {
     const codes: string[] = [];
     const expiresAt = expiresInDays
@@ -256,11 +643,17 @@ export class AdminService {
   // ---- Reports (admin) ----
 
   async listPendingReports() {
-    return this.prisma.report.findMany({
+    const reports = await this.prisma.report.findMany({
       where: { status: 'pending' },
-      include: { reporter: true },
+      include: {
+        reporter: {
+          include: this.reviewUserInclude,
+        },
+      },
       orderBy: { createdAt: 'desc' },
     });
+
+    return reports.map((report) => this.serializeDashboardReport(report));
   }
 
   async updateReportStatus(
@@ -294,5 +687,102 @@ export class AdminService {
       code += chars.charAt(Math.floor(Math.random() * chars.length));
     }
     return code;
+  }
+
+  private serializeReviewAuthor(user: any): SerializedUser {
+    return serializeUser(user, { maskEmail: true });
+  }
+
+  private async buildContentManagementMutation(
+    hubItemId: string,
+    fallbackItem?: AdminHubManagementItem,
+  ): Promise<AdminHubManagementMutationResult> {
+    const snapshot = await this.listHubItems();
+    const item =
+      snapshot.items.find((candidate) => candidate.id === hubItemId) ??
+      fallbackItem;
+
+    if (!item) {
+      throw new NotFoundException('Hub item not found');
+    }
+
+    return {
+      item,
+      stats: snapshot.stats,
+    };
+  }
+
+  private buildContentManagementWhere(
+    query: AdminHubManagementQuery,
+    includeStatusFilter: boolean,
+  ): Prisma.HubItemWhereInput {
+    const where: Prisma.HubItemWhereInput = {
+      deletedAt: null,
+    };
+
+    if (query.type) {
+      where.type = normalizeContentTypeValue(query.type).toLowerCase() as any;
+    }
+
+    if (includeStatusFilter && query.status) {
+      where.reviewStatus = normalizeContentStatusValue(query.status)
+        .toLowerCase() as any;
+    }
+
+    if (query.q?.trim()) {
+      const keyword = query.q.trim();
+      where.OR = [
+        { title: { contains: keyword, mode: 'insensitive' } },
+        { summary: { contains: keyword, mode: 'insensitive' } },
+        {
+          hubItemTags: {
+            some: {
+              tag: {
+                name: { contains: keyword, mode: 'insensitive' },
+              },
+            },
+          },
+        },
+        {
+          author: {
+            is: {
+              email: { contains: keyword, mode: 'insensitive' },
+            },
+          },
+        },
+        {
+          author: {
+            is: {
+              profile: {
+                is: {
+                  displayName: { contains: keyword, mode: 'insensitive' },
+                },
+              },
+            },
+          },
+        },
+      ];
+    }
+
+    return where;
+  }
+
+  private serializeDashboardReport(report: any): AdminDashboardReport {
+    const reporter = report.reporter
+      ? this.serializeReviewAuthor(report.reporter)
+      : undefined;
+
+    return {
+      id: report.id,
+      targetType: report.targetType,
+      targetId: report.targetId,
+      reason: report.reason,
+      status: report.status?.toUpperCase?.() ?? 'PENDING',
+      reporterId: report.reporterId,
+      reporterName: reporter?.name ?? report.reporter?.email ?? '',
+      createdAt:
+        report.createdAt?.toISOString?.() ?? String(report.createdAt ?? ''),
+      reporter,
+    };
   }
 }

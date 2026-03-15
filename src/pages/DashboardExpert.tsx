@@ -19,13 +19,16 @@ import { FileText, Eye, ThumbsUp, Plus, BrainCircuit, Upload, Settings, Users, U
 import { usePageTitle } from "../lib/usePageTitle";
 import { useTranslation } from "../hooks/useTranslation";
 import {
-  fetchMyPublishContentsByApi,
-  fetchHubContents,
-  fetchMyApplicationsByApi,
-  fetchTalentUsers,
+  fetchExpertDashboardByApi,
   updateApplicationStatusByApi,
 } from "../lib/api";
-import type { Content, Application, User } from "../types";
+import type {
+  Content,
+  ExpertDashboardApplication,
+  ExpertDashboardOpportunity,
+  ExpertDashboardStats,
+  User,
+} from "../types";
 
 export function DashboardExpert() {
   const { t } = useTranslation();
@@ -33,61 +36,47 @@ export function DashboardExpert() {
   const { user } = useAuthStore();
 
   const [myContents, setMyContents] = useState<Content[]>([]);
-  const [contents, setContents] = useState<Content[]>([]);
-  const [applications, setApplications] = useState<Application[]>([]);
-  const [users, setUsers] = useState<User[]>([]);
+  const [projectContents, setProjectContents] = useState<ExpertDashboardOpportunity[]>([]);
+  const [inboundApplications, setInboundApplications] = useState<ExpertDashboardApplication[]>([]);
+  const [enterpriseConnections, setEnterpriseConnections] = useState<User[]>([]);
+  const [stats, setStats] = useState<ExpertDashboardStats>({
+    totalContentCount: 0,
+    totalViews: 0,
+    totalLikes: 0,
+    pendingApplicantCount: 0,
+  });
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
 
-  const loadData = () => {
+  const loadData = async () => {
     if (!user) return;
     setIsLoading(true);
     setHasError(false);
-    Promise.all([
-      fetchMyPublishContentsByApi(),
-      fetchHubContents(),
-      fetchMyApplicationsByApi(),
-      fetchTalentUsers(),
-    ]).then(([mine, all, apps, talent]) => {
-      setMyContents(mine);
-      setContents(all);
-      setApplications(apps);
-      setUsers(talent);
-    }).catch(() => {
+    try {
+      const dashboard = await fetchExpertDashboardByApi();
+      setMyContents(dashboard.myContents);
+      setProjectContents(dashboard.collaborationOpportunities);
+      setInboundApplications(dashboard.inboundApplications);
+      setEnterpriseConnections(dashboard.enterpriseConnections);
+      setStats(dashboard.stats);
+    } catch {
       setHasError(true);
-    }).finally(() => {
+    } finally {
       setIsLoading(false);
-    });
+    }
   };
 
   useEffect(() => {
-    loadData();
+    void loadData();
   }, [user?.id]);
 
   if (!user || user.role !== "EXPERT") return null;
   if (hasError) return <ErrorState onRetry={loadData} />;
   if (isLoading) return <LoadingSkeleton />;
 
-  const totalViews = myContents.reduce((acc, c) => acc + c.views, 0);
-  const totalLikes = myContents.reduce((acc, c) => acc + c.likes, 0);
-
-  // Projects from hub for collaboration - filter by visibility
-  const projectContents = contents
-    .filter((c) => {
-      if (c.status !== "PUBLISHED" || c.type !== "PROJECT" || c.authorId === user.id) return false;
-      // Respect visibility: EXPERTS_LEARNERS is visible to experts
-      return true;
-    })
-    .slice(0, 3);
-
-  // Get applications for my content (Assistants/applicants)
-  const myContentIds = myContents.map(c => c.id);
-  const inboundApplications = applications.filter(a => myContentIds.includes(a.targetId));
-
-  // Learner users who could be assistants (simplified - show learners who applied)
-  const learnerApplicants = inboundApplications
-    .map(a => ({ ...a, applicant: users.find(u => u.id === a.applicantId) }))
-    .filter(a => a.applicant?.role === "LEARNER");
+  const learnerApplicants = inboundApplications.filter(
+    (application) => application.applicant.role === "LEARNER",
+  );
 
   return (
     <div className="space-y-8">
@@ -129,7 +118,7 @@ export function DashboardExpert() {
             <FileText className="h-4 w-4 text-indigo-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-zinc-100">{myContents.length}</div>
+            <div className="text-2xl font-bold text-zinc-100">{stats.totalContentCount}</div>
           </CardContent>
         </Card>
         <Card className="glass-panel">
@@ -140,7 +129,7 @@ export function DashboardExpert() {
             <Eye className="h-4 w-4 text-indigo-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-zinc-100">{totalViews.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-zinc-100">{stats.totalViews.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card className="glass-panel">
@@ -151,7 +140,7 @@ export function DashboardExpert() {
             <ThumbsUp className="h-4 w-4 text-indigo-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-zinc-100">{totalLikes.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-zinc-100">{stats.totalLikes.toLocaleString()}</div>
           </CardContent>
         </Card>
         <Card className="glass-panel">
@@ -162,7 +151,7 @@ export function DashboardExpert() {
             <UserPlus className="h-4 w-4 text-indigo-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-zinc-100">{inboundApplications.filter(a => a.status === "SUBMITTED").length}</div>
+            <div className="text-2xl font-bold text-zinc-100">{stats.pendingApplicantCount}</div>
           </CardContent>
         </Card>
       </div>
@@ -178,7 +167,7 @@ export function DashboardExpert() {
           </CardHeader>
           <CardContent className="space-y-4">
             {myContents.length > 0 ? myContents.map((content) => {
-              const contentApps = applications.filter(a => a.targetId === content.id);
+              const contentApps = inboundApplications.filter(a => a.targetId === content.id);
               return (
                 <Link
                   key={content.id}
@@ -215,7 +204,6 @@ export function DashboardExpert() {
           </CardHeader>
           <CardContent className="space-y-4">
             {projectContents.length > 0 ? projectContents.map((content) => {
-              const author = users.find(u => u.id === content.authorId);
               return (
                 <Link
                   key={content.id}
@@ -224,7 +212,7 @@ export function DashboardExpert() {
                 >
                   <p className="text-sm font-medium text-zinc-300 mb-1">{content.title}</p>
                   <p className="text-xs text-zinc-500 mb-1">
-                    {t("dashboard.posted_by")} <span className="text-indigo-400">{author?.name || t("hub.unknown")}</span>
+                    {t("dashboard.posted_by")} <span className="text-indigo-400">{content.author?.name || t("hub.unknown")}</span>
                     {content.visibility === "EXPERTS_LEARNERS" && (
                       <Badge variant="outline" className="ml-2 text-[9px] border-amber-500/30 text-amber-400">{t("dashboard.experts_only")}</Badge>
                     )}
@@ -250,8 +238,6 @@ export function DashboardExpert() {
           </CardHeader>
           <CardContent className="space-y-4">
             {learnerApplicants.length > 0 ? learnerApplicants.map(({ applicant, ...app }) => {
-              if (!applicant) return null;
-              const targetContent = contents.find(c => c.id === app.targetId);
               return (
                 <div key={app.id} className="border-b border-white/10 pb-4 last:border-0 last:pb-0">
                   <div className="flex items-center gap-3 mb-2">
@@ -263,7 +249,7 @@ export function DashboardExpert() {
                         </Link>
                         <Badge variant="secondary" className="text-[10px]">{formatRole(applicant.role)}</Badge>
                       </div>
-                      <p className="text-xs text-zinc-500 truncate">{t("dashboard.applied_to")} {targetContent?.title || t("hub.unknown")}</p>
+                      <p className="text-xs text-zinc-500 truncate">{t("dashboard.applied_to")} {app.targetContentTitle || t("hub.unknown")}</p>
                     </div>
                     <StatusBadge status={app.status === "SUBMITTED" ? "PENDING_REVIEW" : app.status === "ACCEPTED" ? "PUBLISHED" : "REJECTED"} />
                   </div>
@@ -273,11 +259,11 @@ export function DashboardExpert() {
                   {app.status === "SUBMITTED" && (
                     <div className="flex gap-2 ml-11">
                       <Button size="sm" variant="outline" className="h-7 text-xs gap-1 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
-                        onClick={async () => { try { await updateApplicationStatusByApi(app.id, "accepted"); setApplications(prev => prev.map(a => a.id === app.id ? { ...a, status: "ACCEPTED" } : a)); toast.success(t("dashboard.app_accepted")); } catch { toast.error(t("api.request_failed")); } }}>
+                        onClick={async () => { try { await updateApplicationStatusByApi(app.id, "accepted"); setInboundApplications(prev => prev.map(a => a.id === app.id ? { ...a, status: "ACCEPTED" } : a)); setStats(prev => ({ ...prev, pendingApplicantCount: Math.max(0, prev.pendingApplicantCount - 1) })); toast.success(t("dashboard.app_accepted")); } catch { toast.error(t("api.request_failed")); } }}>
                         <CheckCircle className="h-3 w-3" /> {t("dashboard.approve")}
                       </Button>
                       <Button size="sm" variant="outline" className="h-7 text-xs gap-1 border-red-500/30 text-red-400 hover:bg-red-500/10"
-                        onClick={async () => { try { await updateApplicationStatusByApi(app.id, "rejected"); setApplications(prev => prev.map(a => a.id === app.id ? { ...a, status: "REJECTED" } : a)); toast.error(t("dashboard.app_rejected")); } catch { toast.error(t("api.request_failed")); } }}>
+                        onClick={async () => { try { await updateApplicationStatusByApi(app.id, "rejected"); setInboundApplications(prev => prev.map(a => a.id === app.id ? { ...a, status: "REJECTED" } : a)); setStats(prev => ({ ...prev, pendingApplicantCount: Math.max(0, prev.pendingApplicantCount - 1) })); toast.error(t("dashboard.app_rejected")); } catch { toast.error(t("api.request_failed")); } }}>
                         <XCircle className="h-3 w-3" /> {t("dashboard.decline")}
                       </Button>
                       <Link to={`/messages?to=${applicant.id}`}>
@@ -309,7 +295,7 @@ export function DashboardExpert() {
             </Link>
           </CardHeader>
           <CardContent className="space-y-4">
-            {users.filter(u => u.role === "ENTERPRISE_LEADER").slice(0, 3).map((eu) => (
+            {enterpriseConnections.map((eu) => (
               <Link
                 key={eu.id}
                 to={`/u/${eu.id}`}
@@ -325,7 +311,7 @@ export function DashboardExpert() {
                   <p className="text-xs text-zinc-500 truncate">{eu.title}{eu.company ? ` - ${eu.company}` : ""}</p>
                 </div>
                 <Badge variant="outline" className="border-indigo-500/30 text-indigo-400 bg-indigo-500/10 text-[10px] shrink-0">
-                  {t("common.view_all")} {/* wait we don't have common.view yet, I'll just keep it or change to apply? oh let's replace "View" to t("dashboard.view_all") for now. */}
+                  {t("common.view_all")}
                 </Badge>
               </Link>
             ))}

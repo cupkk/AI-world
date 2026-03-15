@@ -67,3 +67,5 @@
 - `DEPLOY_HOST` 和 `*_BASE_URL` 都会在 workflow 中做格式校验，但仍建议手工检查是否有空格、换行或引号。
 - 如需切换到新的部署私钥，先更新服务器 `authorized_keys`，再替换 `DEPLOY_SSH_KEY`。
 - 凭据轮换后，要同步更新 GitHub secrets、服务器环境变量和供应商控制台配置。
+
+部署 SSH key 轮换步骤见 [SSH_密钥轮换清单.md](/d:/github/AI-world/docs/SSH_%E5%AF%86%E9%92%A5%E8%BD%AE%E6%8D%A2%E6%B8%85%E5%8D%95.md)。

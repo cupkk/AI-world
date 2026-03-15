@@ -27,6 +27,16 @@ export class UsersController {
 export class ProfileController {
   constructor(private readonly profileService: ProfileService) {}
 
+  @Get(':userId/page')
+  @Public()
+  @ApiOperation({ summary: '获取用户主页聚合读模型' })
+  async getProfilePage(
+    @Param('userId') userId: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.profileService.getProfilePage(userId, user?.id);
+  }
+
   @Get(':userId')
   @Public()
   @ApiOperation({ summary: '获取用户主页详情' })

@@ -19,6 +19,13 @@ import { ActiveOnly } from '../../common/decorators/active-only.decorator';
 export class EnterpriseController {
   constructor(private readonly service: EnterpriseService) {}
 
+  @Get('dashboard')
+  @Roles('ENTERPRISE_LEADER')
+  @ApiOperation({ summary: 'Get enterprise dashboard data' })
+  async getDashboard(@CurrentUser() user: CurrentUserPayload) {
+    return this.service.getDashboard(user.id);
+  }
+
   @Get('me')
   @Roles('ENTERPRISE_LEADER')
   @ApiOperation({ summary: '获取我的企业战略信息' })
