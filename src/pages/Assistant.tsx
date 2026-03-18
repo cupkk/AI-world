@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
   BrainCircuit,
+  Database,
   ExternalLink,
   Eye,
+  FileText,
   Heart,
   History,
   MessageSquare,
@@ -23,13 +25,15 @@ import { useTranslation } from "../hooks/useTranslation";
 import {
   ApiError,
   fetchHubContentByIdApi,
+  fetchKnowledgeBaseFilesApi,
   fetchUserByIdApi,
   requestAssistantRecommend,
 } from "../lib/api";
+import { featureFlags } from "../lib/features";
 import { usePageTitle } from "../lib/usePageTitle";
 import { formatRole } from "../lib/utils";
 import { useAuthStore } from "../store/authStore";
-import type { AssistantMessage } from "../types";
+import type { AssistantMessage, KnowledgeDocument } from "../types";
 
 type ConversationHistoryEntry = {
   id: string;
@@ -48,10 +52,16 @@ function getInitialAssistantMessage(content: string): AssistantMessage[] {
   ];
 }
 
+function formatKnowledgeScore(score?: number) {
+  if (score === undefined) return null;
+  return `${Math.round(score * 100)}%`;
+}
+
 export function Assistant() {
   const { t, language } = useTranslation();
   usePageTitle(t("assistant.ai_assistant"));
   const { user } = useAuthStore();
+
   const [showHistory, setShowHistory] = useState(false);
   const [conversationHistory, setConversationHistory] = useState<
     ConversationHistoryEntry[]
@@ -69,6 +79,66 @@ export function Assistant() {
   const [input, setInput] = useState("");
   const [isReplying, setIsReplying] = useState(false);
   const [assistantError, setAssistantError] = useState<string | null>(null);
+  const [knowledgeDocuments, setKnowledgeDocuments] = useState<
+    KnowledgeDocument[]
+  >([]);
+  const [isKnowledgeBaseLoading, setIsKnowledgeBaseLoading] = useState(
+    featureFlags.knowledgeBase,
+  );
+  const [hasKnowledgeBaseError, setHasKnowledgeBaseError] = useState(false);
+  const [assistantKnowledgeBaseReadyCount, setAssistantKnowledgeBaseReadyCount] =
+    useState<number | null>(null);
+
+  const loadKnowledgeBase = async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!featureFlags.knowledgeBase) return;
+
+    if (!silent) {
+      setIsKnowledgeBaseLoading(true);
+    }
+
+    try {
+      const files = await fetchKnowledgeBaseFilesApi();
+      setKnowledgeDocuments(files);
+      setHasKnowledgeBaseError(false);
+    } catch {
+      setHasKnowledgeBaseError(true);
+    } finally {
+      if (!silent) {
+        setIsKnowledgeBaseLoading(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (!featureFlags.knowledgeBase) return;
+    void loadKnowledgeBase();
+  }, []);
+
+  const processingDocumentCount = knowledgeDocuments.filter(
+    (item) => item.status === "PROCESSING",
+  ).length;
+  const failedDocumentCount = knowledgeDocuments.filter(
+    (item) => item.status === "FAILED",
+  ).length;
+  const readyDocumentCountFromList = knowledgeDocuments.filter(
+    (item) => item.status === "READY",
+  ).length;
+  const readyDocumentCount = Math.max(
+    assistantKnowledgeBaseReadyCount ?? 0,
+    readyDocumentCountFromList,
+  );
+
+  useEffect(() => {
+    if (!featureFlags.knowledgeBase || processingDocumentCount === 0) return;
+
+    const timer = window.setInterval(() => {
+      void loadKnowledgeBase({ silent: true });
+    }, 5000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [processingDocumentCount]);
 
   const handleSend = async () => {
     if (!input.trim()) return;
@@ -97,6 +167,10 @@ export function Assistant() {
         history: requestHistory,
       });
 
+      setAssistantKnowledgeBaseReadyCount(
+        result.knowledgeBaseReadyCount ?? null,
+      );
+
       const [recommendedUser, recommendedContent] = await Promise.all([
         result.recommendedUserId
           ? fetchUserByIdApi(result.recommendedUserId).catch(() => undefined)
@@ -114,6 +188,7 @@ export function Assistant() {
         content: result.reply || t("assistant.generic_reply"),
         recommendedUser,
         recommendedContent,
+        knowledgeSources: result.knowledgeSources,
       };
 
       setMessages((prev) => [...prev, aiResponse]);
@@ -142,9 +217,7 @@ export function Assistant() {
         error instanceof ApiError &&
         error.errorCode === "ASSISTANT_UNAVAILABLE"
       ) {
-        setAssistantError(
-          error.message || t("assistant.service_unavailable"),
-        );
+        setAssistantError(error.message || t("assistant.service_unavailable"));
         toast.error(error.message || t("assistant.service_unavailable"));
       } else {
         toast.error(t("api.request_failed"));
@@ -237,6 +310,89 @@ export function Assistant() {
 
         <Card className="glass-panel flex flex-1 flex-col overflow-hidden border-white/10 shadow-xl">
           <CardContent className="custom-scrollbar flex-1 space-y-6 overflow-y-auto bg-zinc-900/30 p-6">
+            {featureFlags.knowledgeBase ? (
+              <div
+                data-testid="assistant-kb-banner"
+                className="rounded-2xl border border-white/10 bg-zinc-950/50 p-4"
+              >
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-medium text-zinc-100">
+                      <Database className="h-4 w-4 text-indigo-400" />
+                      {t("assistant.kb_status_title")}
+                    </div>
+                    <p className="mt-1 text-sm text-zinc-400">
+                      {processingDocumentCount > 0
+                        ? t("assistant.kb_processing_hint")
+                        : t("assistant.kb_status_desc")}
+                    </p>
+                  </div>
+                  <Link to="/settings/knowledge-base">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-2 border-white/10"
+                    >
+                      <FileText className="h-4 w-4" />
+                      {t("assistant.kb_open_settings")}
+                    </Button>
+                  </Link>
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+                      {t("assistant.kb_ready_count")}
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold text-zinc-100">
+                      {readyDocumentCount}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+                      {t("assistant.kb_processing_count")}
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold text-zinc-100">
+                      {processingDocumentCount}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-zinc-500">
+                      {t("assistant.kb_failed_count")}
+                    </p>
+                    <p className="mt-2 text-2xl font-semibold text-zinc-100">
+                      {failedDocumentCount}
+                    </p>
+                  </div>
+                </div>
+
+                {isKnowledgeBaseLoading ? (
+                  <p className="mt-4 text-xs text-zinc-500">
+                    {t("assistant.kb_loading")}
+                  </p>
+                ) : null}
+
+                {hasKnowledgeBaseError ? (
+                  <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-100">
+                    {t("assistant.kb_load_error")}
+                  </div>
+                ) : null}
+
+                {!isKnowledgeBaseLoading &&
+                !hasKnowledgeBaseError &&
+                readyDocumentCount === 0 ? (
+                  <div className="mt-4 rounded-xl border border-sky-500/20 bg-sky-500/10 px-4 py-3">
+                    <div className="text-sm font-medium text-sky-100">
+                      {t("assistant.kb_empty_title")}
+                    </div>
+                    <p className="mt-1 text-xs text-sky-100/80">
+                      {t("assistant.kb_empty_desc")}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             {assistantError ? (
               <div
                 data-testid="assistant-error-banner"
@@ -280,6 +436,50 @@ export function Assistant() {
                   }`}
                 >
                   <p>{message.content}</p>
+
+                  {message.knowledgeSources && message.knowledgeSources.length > 0 ? (
+                    <div className="mt-2 rounded-xl border border-sky-500/30 bg-sky-500/10 p-4">
+                      <div className="mb-3">
+                        <div className="text-xs font-medium uppercase tracking-[0.18em] text-sky-100/90">
+                          {t("assistant.kb_sources_title")}
+                        </div>
+                        <p className="mt-1 text-xs text-sky-100/75">
+                          {t("assistant.kb_sources_desc")}
+                        </p>
+                      </div>
+                      <div className="space-y-3">
+                        {message.knowledgeSources.map((source, index) => (
+                          <div
+                            key={`${message.id}-${source.fileId}-${index}`}
+                            data-testid={`assistant-knowledge-source-${index}`}
+                            className="rounded-xl border border-white/10 bg-black/10 p-3"
+                          >
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge
+                                variant="outline"
+                                className="gap-1 border-white/10 text-[10px] text-sky-100"
+                              >
+                                <FileText className="h-3 w-3" />
+                                {source.fileName}
+                              </Badge>
+                              {formatKnowledgeScore(source.score) ? (
+                                <Badge
+                                  variant="outline"
+                                  className="border-white/10 text-[10px] text-zinc-200"
+                                >
+                                  {t("assistant.kb_source_relevance")}:{" "}
+                                  {formatKnowledgeScore(source.score)}
+                                </Badge>
+                              ) : null}
+                            </div>
+                            <p className="mt-2 line-clamp-4 whitespace-pre-line text-xs leading-6 text-zinc-100/85">
+                              {source.excerpt}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
 
                   {message.recommendedUser ? (
                     <div className="mt-2 rounded-xl border border-indigo-500/30 bg-indigo-500/10 p-4">
@@ -330,7 +530,10 @@ export function Assistant() {
                     <div className="mt-2 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
                       <div className="space-y-3">
                         <div className="flex items-center gap-2">
-                          <Badge variant="secondary" className="text-[10px] uppercase">
+                          <Badge
+                            variant="secondary"
+                            className="text-[10px] uppercase"
+                          >
                             {message.recommendedContent.type}
                           </Badge>
                           <span className="text-xs text-zinc-500">

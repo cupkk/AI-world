@@ -21,7 +21,7 @@ export function Landing() {
             <Link to="/login" className="text-sm font-medium text-zinc-400 hover:text-white transition-colors">
               {t("nav.sign_in")}
             </Link>
-            <Link to="/invite">
+            <Link to="/login?tab=register">
               <Button className="h-9 rounded-full bg-white text-black hover:bg-zinc-200">
                 {t("landing.btn_join")}
               </Button>
@@ -54,7 +54,7 @@ export function Landing() {
           </p>
           
           <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link to="/invite">
+            <Link to="/login?tab=register">
               <Button className="h-12 px-8 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-base shadow-[0_0_30px_rgba(79,70,229,0.4)] gap-2">
                 {t("landing.btn_join")} <ArrowRight className="h-4 w-4" />
               </Button>

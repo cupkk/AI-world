@@ -5,6 +5,32 @@ import { CurrentUser, CurrentUserPayload } from '../../common/decorators/current
 import { ActiveOnly } from '../../common/decorators/active-only.decorator';
 import { CreateApplicationDto, UpdateApplicationDto } from './applications.dto';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
+
+class ApplyApplicationAuditActionDto {
+  @IsArray()
+  @IsString({ each: true })
+  ids: string[];
+
+  @IsString()
+  @IsIn([
+    'MARK_REVIEWED',
+    'REJECT_APPLICATION',
+    'REJECT_TARGET_CONTENT',
+    'SUSPEND_APPLICANT',
+    'SUSPEND_OWNER',
+  ])
+  action:
+    | 'MARK_REVIEWED'
+    | 'REJECT_APPLICATION'
+    | 'REJECT_TARGET_CONTENT'
+    | 'SUSPEND_APPLICANT'
+    | 'SUSPEND_OWNER';
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
 
 @ApiTags('Applications')
 @Controller('applications')
@@ -44,6 +70,21 @@ export class ApplicationsController {
   @ApiOperation({ summary: '申请审计视图（管理员）' })
   async listAudit() {
     return this.service.listAudit();
+  }
+
+  @Post('audit/actions')
+  @Roles('ADMIN')
+  @ApiOperation({ summary: '对申请审计记录执行治理动作（管理员）' })
+  async applyAuditAction(
+    @Body() dto: ApplyApplicationAuditActionDto,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.service.applyAuditAction(
+      dto.ids,
+      dto.action,
+      user.id,
+      dto.reason,
+    );
   }
 
   @Patch(':id')

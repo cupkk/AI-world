@@ -28,6 +28,12 @@ import { formatDistanceToNow } from "date-fns";
 import { enUS, zhCN } from "date-fns/locale";
 import { usePageTitle } from "../lib/usePageTitle";
 import { toast } from "sonner";
+import {
+  getContentDetailSections,
+  getContentDetailHref,
+  getContentDomainMeta,
+  getContentPreviewSections,
+} from "../lib/contentDomain";
 
 export function HubDetail() {
   const { t, language } = useTranslation();
@@ -72,6 +78,13 @@ export function HubDetail() {
   const author = detail.author ?? content.author ?? null;
   const relatedContents = detail.relatedContents;
   const viewerApplication = detail.viewerApplication ?? null;
+  const detailSections =
+    detail.detailSections.length > 0
+      ? detail.detailSections
+      : getContentDetailSections(content);
+  const applicationTargetType =
+    detail.applicationTargetType ??
+    ((content.type === "PROJECT" || content.type === "CONTEST") ? "PROJECT" : null);
 
   // Visibility check
   if (
@@ -103,7 +116,9 @@ export function HubDetail() {
   }
 
   // Application logic for PROJECT/CONTEST
-  const isApplicable = (content.type === "PROJECT" || content.type === "CONTEST") && currentUser && currentUser.id !== content.authorId;
+  const isApplicable = Boolean(
+    applicationTargetType && currentUser && currentUser.id !== content.authorId,
+  );
   const hasApplied = Boolean(viewerApplication);
 
   const getTypeLabel = (type: string) => {
@@ -123,11 +138,42 @@ export function HubDetail() {
     }
   };
 
+  const getSectionTitle = (kind: string) => {
+    switch (kind) {
+      case "BACKGROUND":
+        return t("hub_detail.section_background");
+      case "GOAL":
+        return t("hub_detail.section_goal");
+      case "DELIVERABLES":
+        return t("hub_detail.section_deliverables");
+      case "NEEDED_SUPPORT":
+        return t("hub_detail.section_needed_support");
+      case "SUMMARY":
+      default:
+        return t("hub_detail.section_summary");
+    }
+  };
+
+  const getApplicationSubjectLabel = () => {
+    if (content.contentDomain === "ENTERPRISE_NEED") {
+      return t("hub_detail.target_need");
+    }
+    if (content.contentDomain === "RESEARCH_PROJECT") {
+      return t("hub_detail.target_research_project");
+    }
+    return content.type === "CONTEST"
+      ? t("pub_detail.type_contest")
+      : t("pub_detail.type_project");
+  };
+
+  const applicationSubjectLabel = getApplicationSubjectLabel();
+
   const handleApply = async () => {
     if (!currentUser) return;
+    if (!applicationTargetType) return;
     try {
       const app = await submitApplicationByApi({
-        targetType: "PROJECT",
+        targetType: applicationTargetType,
         targetId: content.id,
         message: applyMessage || undefined,
       });
@@ -137,6 +183,7 @@ export function HubDetail() {
           id: content.id,
           targetType: app.targetType,
           contentType: content.type,
+          contentDomain: content.contentDomain,
           title: content.title,
           status: content.status,
           ownerId: content.authorId,
@@ -257,13 +304,25 @@ export function HubDetail() {
 
       {/* Content Body */}
       <div className="prose prose-invert max-w-none">
-        <div className="rounded-xl border border-white/10 bg-zinc-900/30 backdrop-blur-sm p-8">
-          <p className="text-zinc-300 leading-relaxed whitespace-pre-wrap">
-            {content.description}
-          </p>
-          <p className="mt-6 text-zinc-500 italic text-sm">
-            {/* Full content would be rendered here (Markdown/Rich Text). This is a preview showing the description. */}
-          </p>
+        <div className="rounded-xl border border-white/10 bg-zinc-900/30 backdrop-blur-sm p-8 space-y-6">
+          {detailSections.map((section, index) => (
+            <div
+              key={`${section.kind}-${index}`}
+              className="rounded-2xl border border-white/5 bg-black/10 p-5"
+            >
+              <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-400">
+                {getSectionTitle(section.kind)}
+              </h2>
+              <p className="mt-3 text-zinc-300 leading-relaxed whitespace-pre-wrap">
+                {section.content}
+              </p>
+            </div>
+          ))}
+          {detailSections.length === 0 && (
+            <p className="text-zinc-500 italic text-sm">
+              {t("hub_detail.no_detail_sections")}
+            </p>
+          )}
         </div>
       </div>
 
@@ -286,15 +345,15 @@ export function HubDetail() {
         <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-6">
           {hasApplied ? (
             <div className="flex items-center gap-3 text-emerald-400">
-              <CheckCircle className="h-5 w-5" />
-              <div>
-                <p className="font-medium">{t("hub_detail.application_submitted")}</p>
+                <CheckCircle className="h-5 w-5" />
+                <div>
+                  <p className="font-medium">{t("hub_detail.application_submitted")}</p>
                 <p className="text-xs text-zinc-400 mt-1">{t("hub_detail.owner_review_notice")}</p>
               </div>
             </div>
           ) : showApplyForm ? (
             <div className="space-y-4">
-              <h3 className="text-lg font-medium text-zinc-100">{t("hub_detail.apply_join_this")} {content.type === "CONTEST" ? t("pub_detail.type_contest") : t("pub_detail.type_project")}</h3>
+              <h3 className="text-lg font-medium text-zinc-100">{t("hub_detail.apply_join_this")} {applicationSubjectLabel}</h3>
               <Input
                 placeholder={t("hub_detail.your_message_optional")}
                 value={applyMessage}
@@ -311,7 +370,7 @@ export function HubDetail() {
           ) : (
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-lg font-medium text-zinc-100">{t("hub_detail.interested_this")} {content.type === "CONTEST" ? t("pub_detail.type_contest") : t("pub_detail.type_project")}?</h3>
+                <h3 className="text-lg font-medium text-zinc-100">{t("hub_detail.interested_this")} {applicationSubjectLabel}?</h3>
                 <p className="text-sm text-zinc-400 mt-1">{t("hub_detail.apply_join_collaborate")}</p>
               </div>
               <Button className="bg-indigo-600 hover:bg-indigo-500 text-white gap-2 shadow-[0_0_15px_rgba(79,70,229,0.3)]" onClick={() => setShowApplyForm(true)}>
@@ -330,13 +389,40 @@ export function HubDetail() {
             {relatedContents.length > 0 ? (
               <div className="space-y-4">
                 {relatedContents.map(rc => (
-                  <Link key={rc.id} to={`/hub/${rc.type.toLowerCase()}/${rc.id}`} className="block group">
-                    <Badge variant="outline" className="text-[9px] uppercase mb-1 border-white/10">{getTypeLabel(rc.type)}</Badge>
+                  <Link key={rc.id} to={getContentDetailHref(rc)} className="block group">
+                    {(() => {
+                      const domainMeta = getContentDomainMeta(rc.contentDomain, t);
+                      const DomainIcon = domainMeta.Icon;
+                      const previewSections = getContentPreviewSections(rc, t);
+                      return (
+                        <>
+                    <div className="mb-1 flex flex-wrap items-center gap-2">
+                      <Badge variant="outline" className="text-[9px] uppercase border-white/10">{getTypeLabel(rc.type)}</Badge>
+                      <Badge
+                        variant="outline"
+                        className={`gap-1 text-[9px] border ${domainMeta.className}`}
+                        data-testid={`hub-detail-related-domain-${rc.id}`}
+                      >
+                        <DomainIcon className="h-3 w-3" />
+                        {domainMeta.label}
+                      </Badge>
+                    </div>
                     <p className="text-sm font-medium text-zinc-200 group-hover:text-indigo-400 transition-colors line-clamp-2">{rc.title}</p>
+                    {previewSections.length > 0 ? (
+                      <p
+                        className="mt-1 text-xs text-zinc-500 line-clamp-2"
+                        data-testid={`hub-detail-related-preview-${rc.id}-${previewSections[0].key}`}
+                      >
+                        {previewSections[0].value}
+                      </p>
+                    ) : null}
                     <div className="flex items-center gap-3 mt-1 text-[10px] text-zinc-500">
                       <span>{rc.views} {t("hub_detail.views")}</span>
                       <span>{rc.likes} {t("hub_detail.likes")}</span>
                     </div>
+                        </>
+                      );
+                    })()}
                   </Link>
                 ))}
               </div>

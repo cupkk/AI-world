@@ -125,6 +125,18 @@ describe('EnterpriseService', () => {
           author: { id: 'enterprise-1', role: 'ENTERPRISE_LEADER' },
         },
       ]);
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([
+        {
+          id: 'need-1',
+          title: 'Applied Evaluation Partner Need',
+          background: 'Need expert help to deliver evaluation workflows',
+          reviewStatus: 'published',
+          enterpriseUserId: 'enterprise-1',
+          createdAt: new Date('2026-03-14T10:00:00.000Z'),
+          requiredRoles: ['EXPERT'],
+          visibility: 'public_all',
+        },
+      ]);
       mockPrisma.conversationMember.count.mockResolvedValue(3);
       mockApplicationsService.listForTargets.mockResolvedValue([
         {
@@ -164,7 +176,7 @@ describe('EnterpriseService', () => {
         stats: {
           recommendedExpertsCount: 6,
           activeConversationsCount: 3,
-          postedNeedsCount: 1,
+          postedNeedsCount: 2,
           pendingInboundApplicationsCount: 1,
         },
         recommendedExperts: [
@@ -176,8 +188,15 @@ describe('EnterpriseService', () => {
         ],
         myContents: [
           expect.objectContaining({
+            id: 'need-1',
+            title: 'Applied Evaluation Partner Need',
+            contentDomain: 'ENTERPRISE_NEED',
+            status: 'PUBLISHED',
+          }),
+          expect.objectContaining({
             id: 'hub-1',
             title: 'Enterprise AI Assistant Rollout',
+            contentDomain: 'HUB_ITEM',
             status: 'PENDING_REVIEW',
           }),
         ],
@@ -196,6 +215,7 @@ describe('EnterpriseService', () => {
       });
       expect(mockApplicationsService.listForTargets).toHaveBeenCalledWith([
         { targetType: 'hub_project', targetId: 'hub-1' },
+        { targetType: 'enterprise_need', targetId: 'need-1' },
       ]);
     });
 
@@ -204,6 +224,7 @@ describe('EnterpriseService', () => {
       mockPrisma.user.count.mockResolvedValue(0);
       mockPrisma.user.findMany.mockResolvedValue([]);
       mockPrisma.hubItem.findMany.mockResolvedValue([]);
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([]);
       mockPrisma.conversationMember.count.mockResolvedValue(0);
 
       const result = await service.getDashboard('enterprise-1');
@@ -221,7 +242,16 @@ describe('EnterpriseService', () => {
 
   describe('createNeed', () => {
     it('creates a draft enterprise need', async () => {
-      mockPrisma.enterpriseNeed.create.mockResolvedValue({ id: 'need-1' });
+      mockPrisma.enterpriseNeed.create.mockResolvedValue({
+        id: 'need-1',
+        title: 'AI quality platform upgrade',
+        background: 'Need delivery support',
+        reviewStatus: 'draft',
+        enterpriseUserId: 'enterprise-1',
+        createdAt: new Date('2026-03-13T10:00:00.000Z'),
+        requiredRoles: ['EXPERT', 'LEARNER'],
+        visibility: 'public_all',
+      });
 
       const dto = {
         title: 'AI quality platform upgrade',
@@ -233,7 +263,14 @@ describe('EnterpriseService', () => {
 
       const result = await service.createNeed(dto as any, 'enterprise-1');
 
-      expect(result).toEqual({ id: 'need-1' });
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: 'need-1',
+          title: 'AI quality platform upgrade',
+          contentDomain: 'ENTERPRISE_NEED',
+          status: 'DRAFT',
+        }),
+      );
       expect(mockPrisma.enterpriseNeed.create).toHaveBeenCalledWith({
         data: {
           ...dto,
@@ -269,12 +306,24 @@ describe('EnterpriseService', () => {
       });
       mockPrisma.enterpriseNeed.update.mockResolvedValue({
         id: 'need-1',
+        title: 'AI quality platform upgrade',
+        background: 'Need delivery support',
         reviewStatus: 'pending_review',
+        enterpriseUserId: 'enterprise-1',
+        createdAt: new Date('2026-03-13T10:00:00.000Z'),
+        requiredRoles: ['EXPERT'],
+        visibility: 'public_all',
       });
 
       const result = await service.submitNeed('need-1', 'enterprise-1');
 
-      expect(result.reviewStatus).toBe('pending_review');
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: 'need-1',
+          contentDomain: 'ENTERPRISE_NEED',
+          status: 'PENDING_REVIEW',
+        }),
+      );
       expect(mockPrisma.enterpriseNeed.update).toHaveBeenCalledWith({
         where: { id: 'need-1' },
         data: { reviewStatus: 'pending_review' },
@@ -316,7 +365,18 @@ describe('EnterpriseService', () => {
 
   describe('listNeeds', () => {
     it('applies enterprise visibility filtering at query level', async () => {
-      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([{ id: 'need-1' }]);
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([
+        {
+          id: 'need-1',
+          title: 'Enterprise Search Rollout',
+          background: 'Need delivery support',
+          reviewStatus: 'published',
+          enterpriseUserId: 'enterprise-1',
+          createdAt: new Date('2026-03-13T10:00:00.000Z'),
+          requiredRoles: ['EXPERT'],
+          visibility: 'public_all',
+        },
+      ]);
       mockPrisma.enterpriseNeed.count.mockResolvedValue(1);
 
       const result = await service.listNeeds(
@@ -325,7 +385,14 @@ describe('EnterpriseService', () => {
       );
 
       expect(result).toEqual({
-        items: [{ id: 'need-1' }],
+        items: [
+          expect.objectContaining({
+            id: 'need-1',
+            title: 'Enterprise Search Rollout',
+            contentDomain: 'ENTERPRISE_NEED',
+            status: 'PUBLISHED',
+          }),
+        ],
         total: 1,
         page: 2,
         limit: 5,
@@ -362,11 +429,23 @@ describe('EnterpriseService', () => {
     it('returns a published need when visible to the current role', async () => {
       mockPrisma.enterpriseNeed.findUnique.mockResolvedValue({
         id: 'need-1',
+        title: 'Enterprise Search Rollout',
+        background: 'Need delivery support',
         visibility: 'public_all',
+        reviewStatus: 'published',
+        enterpriseUserId: 'enterprise-1',
+        createdAt: new Date('2026-03-13T10:00:00.000Z'),
       });
 
       const result = await service.getNeed('need-1', 'ENTERPRISE_LEADER');
-      expect(result.id).toBe('need-1');
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: 'need-1',
+          title: 'Enterprise Search Rollout',
+          contentDomain: 'ENTERPRISE_NEED',
+          status: 'PUBLISHED',
+        }),
+      );
     });
 
     it('throws when an enterprise user accesses restricted visibility', async () => {

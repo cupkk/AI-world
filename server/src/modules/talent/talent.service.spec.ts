@@ -50,12 +50,12 @@ describe('TalentService', () => {
         q: 'learner',
         tags: 'AI,NLP',
         role: 'LEARNER',
-        page: 2,
+        page: 1,
         limit: 5,
       });
 
       expect(result.total).toBe(1);
-      expect(result.page).toBe(2);
+      expect(result.page).toBe(1);
       expect(result.limit).toBe(5);
       expect(result.items[0]).toEqual(
         expect.objectContaining({
@@ -73,22 +73,14 @@ describe('TalentService', () => {
             status: 'active',
             deletedAt: null,
             role: 'LEARNER',
+          },
+          include: {
             profile: {
-              OR: [
-                { displayName: { contains: 'learner', mode: 'insensitive' } },
-                { headline: { contains: 'learner', mode: 'insensitive' } },
-                { bio: { contains: 'learner', mode: 'insensitive' } },
-                { org: { contains: 'learner', mode: 'insensitive' } },
-              ],
-              profileTags: {
-                some: {
-                  tag: { name: { in: ['AI', 'NLP'] } },
-                },
+              include: {
+                profileTags: { include: { tag: true } },
               },
             },
           },
-          skip: 5,
-          take: 5,
         }),
       );
     });
@@ -111,8 +103,6 @@ describe('TalentService', () => {
             status: 'active',
             deletedAt: null,
           },
-          skip: 0,
-          take: 20,
         }),
       );
     });

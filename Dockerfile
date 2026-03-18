@@ -3,13 +3,16 @@ WORKDIR /app
 ARG VITE_API_BASE_URL=
 ARG VITE_ENABLE_DEMO_MODE=false
 ARG VITE_ALLOW_DEMO_PREFILL=false
-ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
-ENV VITE_ENABLE_DEMO_MODE=${VITE_ENABLE_DEMO_MODE}
-ENV VITE_ALLOW_DEMO_PREFILL=${VITE_ALLOW_DEMO_PREFILL}
+ARG VITE_ENABLE_ASSISTANT=false
+ARG VITE_ENABLE_KNOWLEDGE_BASE=false
+ARG VITE_ENABLE_PUBLIC_SAMPLE_INVITES=false
 COPY package.json package-lock.json* ./
 RUN npm ci
 COPY . .
-RUN npm run build
+RUN set -a \
+  && if [ -f .env.production ]; then . ./.env.production; fi \
+  && set +a \
+  && npm run build
 
 FROM nginx:1.27-alpine
 COPY --from=build /app/dist /usr/share/nginx/html

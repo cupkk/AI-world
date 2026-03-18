@@ -9,6 +9,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { RedisService } from '../../common/redis/redis.service';
 
 const mockPrisma: any = {
+  $transaction: jest.fn(),
   conversationMember: {
     findMany: jest.fn(),
     findUnique: jest.fn(),
@@ -31,6 +32,10 @@ const mockPrisma: any = {
     findMany: jest.fn(),
     create: jest.fn(),
     update: jest.fn(),
+    updateMany: jest.fn(),
+  },
+  user: {
+    findFirst: jest.fn(),
   },
   userBlock: {
     findFirst: jest.fn(),
@@ -38,6 +43,9 @@ const mockPrisma: any = {
     deleteMany: jest.fn(),
   },
   report: {
+    create: jest.fn(),
+  },
+  auditLog: {
     create: jest.fn(),
   },
 };
@@ -83,6 +91,9 @@ describe('MessagingService', () => {
     jest.clearAllMocks();
     mockRedis.checkRateLimit.mockResolvedValue(true);
     mockPrisma.userBlock.findFirst.mockResolvedValue(null);
+    mockPrisma.$transaction.mockImplementation(async (callback: any) =>
+      callback(mockPrisma),
+    );
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -308,7 +319,10 @@ describe('MessagingService', () => {
 
   describe('blockUser / unblockUser / report', () => {
     it('creates a block relationship', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 'user-2' });
       mockPrisma.userBlock.upsert.mockResolvedValue({ blockerId: 'user-1', blockedId: 'user-2' });
+      mockPrisma.messageRequest.updateMany.mockResolvedValue({ count: 1 });
+      mockPrisma.auditLog.create.mockResolvedValue({});
 
       const result = await service.blockUser('user-1', 'user-2');
 
@@ -318,6 +332,8 @@ describe('MessagingService', () => {
         update: {},
         create: { blockerId: 'user-1', blockedId: 'user-2' },
       });
+      expect(mockPrisma.messageRequest.updateMany).toHaveBeenCalled();
+      expect(mockPrisma.auditLog.create).toHaveBeenCalled();
     });
 
     it('rejects blocking yourself', async () => {
@@ -328,6 +344,7 @@ describe('MessagingService', () => {
 
     it('removes a block relationship', async () => {
       mockPrisma.userBlock.deleteMany.mockResolvedValue({ count: 1 });
+      mockPrisma.auditLog.create.mockResolvedValue({});
 
       const result = await service.unblockUser('user-1', 'user-2');
 
@@ -338,7 +355,9 @@ describe('MessagingService', () => {
     });
 
     it('creates a report record', async () => {
+      mockPrisma.user.findFirst.mockResolvedValue({ id: 'user-2' });
       mockPrisma.report.create.mockResolvedValue({ id: 'report-1' });
+      mockPrisma.auditLog.create.mockResolvedValue({});
 
       const result = await service.report('user-1', 'user', 'user-2', 'spam');
 
@@ -351,6 +370,34 @@ describe('MessagingService', () => {
           reason: 'spam',
         },
       });
+      expect(mockPrisma.auditLog.create).toHaveBeenCalled();
+    });
+
+    it('creates a conversation report when the reporter is a participant', async () => {
+      mockPrisma.conversation.findUnique.mockResolvedValue({
+        id: 'conv-1',
+        members: [{ userId: 'user-1' }, { userId: 'user-2' }],
+      });
+      mockPrisma.report.create.mockResolvedValue({ id: 'report-2' });
+      mockPrisma.auditLog.create.mockResolvedValue({});
+
+      const result = await service.report(
+        'user-1',
+        'conversation',
+        'conv-1',
+        'abusive thread',
+      );
+
+      expect(result).toEqual({ id: 'report-2' });
+      expect(mockPrisma.report.create).toHaveBeenCalledWith({
+        data: {
+          reporterId: 'user-1',
+          targetType: 'conversation',
+          targetId: 'conv-1',
+          reason: 'abusive thread',
+        },
+      });
+      expect(mockPrisma.auditLog.create).toHaveBeenCalled();
     });
   });
 });

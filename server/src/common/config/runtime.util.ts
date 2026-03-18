@@ -2,6 +2,11 @@ export function isProductionEnv(nodeEnv?: string | null): boolean {
   return String(nodeEnv ?? '').trim().toLowerCase() === 'production';
 }
 
+export function isLocalDevelopmentEnv(nodeEnv?: string | null): boolean {
+  const normalized = String(nodeEnv ?? '').trim().toLowerCase();
+  return normalized === 'development' || normalized === 'dev' || normalized === 'test';
+}
+
 export function parseBooleanFlag(
   value: string | boolean | number | null | undefined,
   defaultValue = false,

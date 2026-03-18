@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { useAuthStore } from "../../store/authStore";
 import {
@@ -17,9 +18,18 @@ import {
 } from "../../components/ui/Card";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { UploadCloud, FileText, CheckCircle2, AlertCircle, Loader2, Trash2 } from "lucide-react";
+import {
+  UploadCloud,
+  FileText,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  Trash2,
+  BrainCircuit,
+} from "lucide-react";
 import { usePageTitle } from "../../lib/usePageTitle";
 import { useTranslation } from "../../hooks/useTranslation";
+import { featureFlags } from "../../lib/features";
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
 const SUPPORTED_EXTENSIONS = ["pdf", "doc", "docx", "ppt", "pptx"];
@@ -255,11 +265,22 @@ export function KnowledgeBase() {
 
   return (
     <div className="mx-auto max-w-4xl space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight text-zinc-100">
-          {t("settings.kb_header")}
-        </h1>
-        <p className="text-zinc-400">{t("settings.kb_header_desc")}</p>
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight text-zinc-100">
+            {t("settings.kb_header")}
+          </h1>
+          <p className="text-zinc-400">{t("settings.kb_header_desc")}</p>
+        </div>
+
+        {featureFlags.assistant ? (
+          <Link to="/assistant">
+            <Button variant="outline" className="gap-2 border-white/10">
+              <BrainCircuit className="h-4 w-4" />
+              {t("settings.kb_open_assistant")}
+            </Button>
+          </Link>
+        ) : null}
       </div>
 
       <Card className="glass-panel">

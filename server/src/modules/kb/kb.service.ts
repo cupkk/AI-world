@@ -1,5 +1,11 @@
 import { exec as execCallback } from 'child_process';
-import { Injectable, NotFoundException, BadRequestException, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
 import * as os from 'os';
@@ -8,7 +14,10 @@ import { promisify } from 'util';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { RedisService } from '../../common/redis/redis.service';
 import { StorageService } from '../../common/storage/storage.service';
-import { parseBooleanFlag } from '../../common/config/runtime.util';
+import {
+  isLocalDevelopmentEnv,
+  parseBooleanFlag,
+} from '../../common/config/runtime.util';
 import { normalizeKbUpload } from './kb-upload-security';
 
 const execAsync = promisify(execCallback);
@@ -38,10 +47,26 @@ export class KbService {
     this.avScanTimeoutMs = Number(this.config.get<string>('KB_AV_SCAN_TIMEOUT_MS', '15000'));
   }
 
+  private ensureKnowledgeBaseEnabled() {
+    const nodeEnv = this.config.get<string>('NODE_ENV', 'development');
+    const enabled = parseBooleanFlag(
+      this.config.get<string>('ENABLE_KNOWLEDGE_BASE'),
+      isLocalDevelopmentEnv(nodeEnv),
+    );
+
+    if (!enabled) {
+      throw new ServiceUnavailableException({
+        message: 'Knowledge base is temporarily unavailable.',
+        errorCode: 'KNOWLEDGE_BASE_UNAVAILABLE',
+      });
+    }
+  }
+
   /**
    * Direct file upload — save to local disk and create DB record
    */
   async uploadFile(userId: string, file: Express.Multer.File) {
+    this.ensureKnowledgeBaseEnabled();
     if (!file) throw new BadRequestException('No file provided');
     const normalizedFile = normalizeKbUpload(file);
 
@@ -97,6 +122,7 @@ export class KbService {
    * List my files
    */
   async listFiles(userId: string) {
+    this.ensureKnowledgeBaseEnabled();
     const files = await this.prisma.kbFile.findMany({
       where: { ownerUserId: userId },
       orderBy: { createdAt: 'desc' },
@@ -121,6 +147,7 @@ export class KbService {
    * Delete file and associated chunks
    */
   async deleteFile(fileId: string, userId: string) {
+    this.ensureKnowledgeBaseEnabled();
     const file = await this.prisma.kbFile.findUnique({ where: { id: fileId } });
     if (!file) throw new NotFoundException('File not found');
     if (file.ownerUserId !== userId) throw new NotFoundException('File not found');

@@ -3,7 +3,9 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { StorageService } from '../../common/storage/storage.service';
 import { UpdateProfileDto } from './profile.dto';
 import {
+  serializeEnterpriseNeed,
   serializeHubItem,
+  serializeResearchProject,
   serializeUser,
 } from '../../common/serializers/serialize';
 
@@ -61,23 +63,48 @@ export class ProfileService {
       throw new NotFoundException('Profile not found');
     }
 
-    const contents = await this.prisma.hubItem.findMany({
-      where: {
-        authorUserId: userId,
-        deletedAt: null,
-        reviewStatus: 'published',
-      },
-      include: {
-        hubItemTags: {
-          include: {
-            tag: true,
+    const [hubItems, enterpriseNeeds, researchProjects] = await Promise.all([
+      this.prisma.hubItem.findMany({
+        where: {
+          authorUserId: userId,
+          deletedAt: null,
+          reviewStatus: 'published',
+        },
+        include: {
+          hubItemTags: {
+            include: {
+              tag: true,
+            },
           },
         },
-      },
-      orderBy: [{ publishedAt: 'desc' }, { createdAt: 'desc' }],
-    });
+        orderBy: [{ publishedAt: 'desc' }, { createdAt: 'desc' }],
+      }),
+      this.prisma.enterpriseNeed.findMany({
+        where: {
+          enterpriseUserId: userId,
+          deletedAt: null,
+          reviewStatus: 'published',
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.researchProject.findMany({
+        where: {
+          expertUserId: userId,
+          deletedAt: null,
+          reviewStatus: 'published',
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
 
-    const serializedContents = contents.map(serializeHubItem);
+    const serializedContents = [
+      ...hubItems.map(serializeHubItem),
+      ...enterpriseNeeds.map(serializeEnterpriseNeed),
+      ...researchProjects.map(serializeResearchProject),
+    ].sort(
+      (left, right) =>
+        new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+    );
     const contentTypeCounts = new Map<string, number>();
 
     for (const item of serializedContents) {
@@ -103,6 +130,11 @@ export class ProfileService {
           0,
         ),
         featuredTypes,
+        domainCounts: {
+          hubItems: hubItems.length,
+          enterpriseNeeds: enterpriseNeeds.length,
+          researchProjects: researchProjects.length,
+        },
       },
     };
   }

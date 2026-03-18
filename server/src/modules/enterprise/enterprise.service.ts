@@ -9,6 +9,7 @@ import { UpdateEnterpriseProfileDto, CreateNeedDto, QueryNeedsDto } from './ente
 import { Prisma } from '@prisma/client';
 import {
   serializeHubItem,
+  serializeEnterpriseNeed,
   serializeUser,
 } from '../../common/serializers/serialize';
 import { ApplicationsService } from '../applications/applications.service';
@@ -33,7 +34,14 @@ export class EnterpriseService {
       deletedAt: null,
     };
 
-    const [profile, expertCount, recommendedExperts, myContents, activeConversationsCount] =
+    const [
+      profile,
+      expertCount,
+      recommendedExperts,
+      myHubItems,
+      myEnterpriseNeeds,
+      activeConversationsCount,
+    ] =
       await Promise.all([
         this.prisma.enterpriseProfile.findUnique({
           where: { userId },
@@ -64,18 +72,43 @@ export class EnterpriseService {
           },
           orderBy: { createdAt: 'desc' },
         }),
+        this.prisma.enterpriseNeed.findMany({
+          where: {
+            enterpriseUserId: userId,
+            deletedAt: null,
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
         this.prisma.conversationMember.count({
           where: { userId },
         }),
       ]);
 
+    const serializedMyContents = [
+      ...myHubItems.map((item) => serializeHubItem(item)),
+      ...myEnterpriseNeeds.map((item) => serializeEnterpriseNeed(item)),
+    ].sort(
+      (left, right) =>
+        new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime(),
+    );
+
+    const applicationTargets = [
+      ...myHubItems
+        .filter((item) => item.type === 'project' || item.type === 'contest')
+        .map((item) => ({
+          targetType: 'hub_project' as const,
+          targetId: item.id,
+        })),
+      ...myEnterpriseNeeds.map((item) => ({
+        targetType: 'enterprise_need' as const,
+        targetId: item.id,
+      })),
+    ];
+
     const serializedInboundApplications =
-      myContents.length > 0
+      applicationTargets.length > 0
         ? await this.applicationsService.listForTargets(
-            myContents.map((item) => ({
-              targetType: 'hub_project',
-              targetId: item.id,
-            })),
+            applicationTargets,
           )
         : [];
 
@@ -88,7 +121,7 @@ export class EnterpriseService {
       stats: {
         recommendedExpertsCount: expertCount,
         activeConversationsCount,
-        postedNeedsCount: myContents.length,
+        postedNeedsCount: serializedMyContents.length,
         pendingInboundApplicationsCount: serializedInboundApplications.filter(
           (app) => app.status === 'SUBMITTED',
         ).length,
@@ -96,7 +129,7 @@ export class EnterpriseService {
       recommendedExperts: recommendedExperts.map((expert) =>
         serializeUser(expert, { maskEmail: true }),
       ),
-      myContents: myContents.map((item) => serializeHubItem(item)),
+      myContents: serializedMyContents,
       inboundApplications: serializedInboundApplications,
     };
   }
@@ -120,7 +153,7 @@ export class EnterpriseService {
     // Content moderation: block recruitment
     this.checkRecruitmentContent(dto.title + ' ' + (dto.background || '') + ' ' + (dto.goal || ''));
 
-    return this.prisma.enterpriseNeed.create({
+    const created = await this.prisma.enterpriseNeed.create({
       data: {
         ...dto,
         requiredRoles: dto.requiredRoles as any,
@@ -128,6 +161,8 @@ export class EnterpriseService {
         reviewStatus: 'draft',
       },
     });
+
+    return serializeEnterpriseNeed(created);
   }
 
   async submitNeed(id: string, userId: string) {
@@ -140,10 +175,12 @@ export class EnterpriseService {
       throw new BadRequestException('Only drafts can be submitted');
     }
 
-    return this.prisma.enterpriseNeed.update({
+    const updated = await this.prisma.enterpriseNeed.update({
       where: { id },
       data: { reviewStatus: 'pending_review' },
     });
+
+    return serializeEnterpriseNeed(updated);
   }
 
   /**
@@ -187,7 +224,12 @@ export class EnterpriseService {
       this.prisma.enterpriseNeed.count({ where }),
     ]);
 
-    return { items, total, page, limit };
+    return {
+      items: items.map((item) => serializeEnterpriseNeed(item)),
+      total,
+      page,
+      limit,
+    };
   }
 
   async getNeed(id: string, userRole: string) {
@@ -208,7 +250,7 @@ export class EnterpriseService {
       throw new ForbiddenException('You do not have access to this need');
     }
 
-    return need;
+    return serializeEnterpriseNeed(need);
   }
 
   async getNeedApplications(id: string, userId: string) {

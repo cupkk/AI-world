@@ -1,6 +1,7 @@
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { useAuthStore } from "../../store/authStore";
 import { useTranslation } from "../../hooks/useTranslation";
+import { featureFlags } from "../../lib/features";
 import { DictKey } from "../../lib/i18n";
 import {
   BookOpen,
@@ -21,30 +22,31 @@ type NavItem = {
   nameKey: DictKey;
   href: string;
   icon: any;
+  enabled?: boolean;
 };
 
 const LEARNER_NAV: NavItem[] = [
   { nameKey: "app.nav_overview", href: "/app/learner", icon: BookOpen },
   { nameKey: "app.nav_opportunities", href: "/hub?type=PROJECT", icon: Rocket },
   { nameKey: "app.nav_reputation", href: "/publish", icon: Award },
-  { nameKey: "nav.ai_assistant", href: "/assistant", icon: BrainCircuit },
-  { nameKey: "app.nav_knowledge_base", href: "/settings/knowledge-base", icon: Upload },
+  { nameKey: "nav.ai_assistant", href: "/assistant", icon: BrainCircuit, enabled: featureFlags.assistant },
+  { nameKey: "app.nav_knowledge_base", href: "/settings/knowledge-base", icon: Upload, enabled: featureFlags.knowledgeBase },
 ];
 
 const EXPERT_NAV: NavItem[] = [
   { nameKey: "app.nav_overview", href: "/app/expert", icon: FlaskConical },
   { nameKey: "app.nav_publish", href: "/publish", icon: Plus },
   { nameKey: "app.nav_collaborators", href: "/talent", icon: Users },
-  { nameKey: "nav.ai_assistant", href: "/assistant", icon: BrainCircuit },
-  { nameKey: "app.nav_knowledge_base", href: "/settings/knowledge-base", icon: Upload },
+  { nameKey: "nav.ai_assistant", href: "/assistant", icon: BrainCircuit, enabled: featureFlags.assistant },
+  { nameKey: "app.nav_knowledge_base", href: "/settings/knowledge-base", icon: Upload, enabled: featureFlags.knowledgeBase },
 ];
 
 const ENTERPRISE_NAV: NavItem[] = [
   { nameKey: "app.nav_overview", href: "/app/enterprise", icon: Target },
   { nameKey: "app.nav_post_project", href: "/publish", icon: FileText },
   { nameKey: "app.nav_discover_talent", href: "/talent", icon: Users },
-  { nameKey: "nav.ai_assistant", href: "/assistant", icon: BrainCircuit },
-  { nameKey: "app.nav_knowledge_base", href: "/settings/knowledge-base", icon: Upload },
+  { nameKey: "nav.ai_assistant", href: "/assistant", icon: BrainCircuit, enabled: featureFlags.assistant },
+  { nameKey: "app.nav_knowledge_base", href: "/settings/knowledge-base", icon: Upload, enabled: featureFlags.knowledgeBase },
 ];
 
 export function AppLayout() {
@@ -58,6 +60,7 @@ export function AppLayout() {
       : user?.role === "ENTERPRISE_LEADER"
         ? ENTERPRISE_NAV
         : LEARNER_NAV;
+  const filteredNavItems = navItems.filter((item) => item.enabled !== false);
 
   const roleLabel =
     user?.role === "EXPERT"
@@ -76,7 +79,7 @@ export function AppLayout() {
             </span>
           </div>
           <nav className="flex space-x-2 overflow-x-auto pb-2 md:flex-col md:space-x-0 md:space-y-1 md:pb-0 custom-scrollbar">
-            {navItems.map((item) => {
+            {filteredNavItems.map((item) => {
               const isActive = location.pathname === item.href || (item.href !== "/app/learner" && item.href !== "/app/expert" && item.href !== "/app/enterprise" && location.pathname.startsWith(item.href));
               return (
                 <Link

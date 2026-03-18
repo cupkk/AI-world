@@ -11,7 +11,7 @@ import sys
 payload = json.loads(sys.argv[1])
 active_targets = payload.get("data", {}).get("activeTargets", [])
 
-required_jobs = {"aiworld-production-api", "aiworld-staging-api"}
+required_jobs = {"aiworld-production-api"}
 seen = {}
 
 for target in active_targets:

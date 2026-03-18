@@ -15,6 +15,14 @@ export class MessagingService {
     private redis: RedisService,
   ) {}
 
+  private readonly userProfileInclude = {
+    profile: {
+      include: {
+        profileTags: { include: { tag: true } },
+      },
+    },
+  } as const;
+
   // ---- Conversations ----
 
   async getConversations(userId: string) {
@@ -320,6 +328,20 @@ export class MessagingService {
     }));
   }
 
+  async listBlockedUsers(userId: string) {
+    const blocks = await this.prisma.userBlock.findMany({
+      where: { blockerId: userId },
+      include: {
+        blocked: {
+          include: this.userProfileInclude,
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return blocks.map((item) => serializeUser(item.blocked, { maskEmail: true }));
+  }
+
   async acceptRequest(requestId: string, userId: string) {
     const request = await this.prisma.messageRequest.findUnique({ where: { id: requestId } });
     if (!request) throw new NotFoundException();
@@ -350,25 +372,146 @@ export class MessagingService {
 
   async blockUser(blockerId: string, blockedId: string) {
     if (blockerId === blockedId) throw new BadRequestException('Cannot block yourself');
+    const target = await this.prisma.user.findFirst({
+      where: { id: blockedId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!target) throw new NotFoundException('User not found');
 
-    return this.prisma.userBlock.upsert({
-      where: { blockerId_blockedId: { blockerId, blockedId } },
-      update: {},
-      create: { blockerId, blockedId },
+    return this.prisma.$transaction(async (tx) => {
+      const block = await tx.userBlock.upsert({
+        where: { blockerId_blockedId: { blockerId, blockedId } },
+        update: {},
+        create: { blockerId, blockedId },
+      });
+
+      await tx.messageRequest.updateMany({
+        where: {
+          status: 'pending',
+          OR: [
+            { fromUserId: blockerId, toUserId: blockedId },
+            { fromUserId: blockedId, toUserId: blockerId },
+          ],
+        },
+        data: { status: 'rejected' },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: blockerId,
+          action: 'block_user',
+          targetType: 'user',
+          targetId: blockedId,
+        },
+      });
+
+      return block;
     });
   }
 
   async unblockUser(blockerId: string, blockedId: string) {
-    await this.prisma.userBlock.deleteMany({
-      where: { blockerId, blockedId },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.userBlock.deleteMany({
+        where: { blockerId, blockedId },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: blockerId,
+          action: 'unblock_user',
+          targetType: 'user',
+          targetId: blockedId,
+        },
+      });
     });
     return { success: true };
   }
 
   async report(reporterId: string, targetType: string, targetId: string, reason: string) {
-    return this.prisma.report.create({
-      data: { reporterId, targetType, targetId, reason },
+    const normalizedTargetType = targetType.trim().toLowerCase();
+    const normalizedReason = reason.trim();
+
+    if (!normalizedReason) {
+      throw new BadRequestException('Report reason is required');
+    }
+
+    if (normalizedTargetType === 'user') {
+      if (reporterId === targetId) {
+        throw new BadRequestException('Cannot report yourself');
+      }
+
+      const targetUser = await this.prisma.user.findFirst({
+        where: { id: targetId, deletedAt: null },
+        select: { id: true },
+      });
+      if (!targetUser) {
+        throw new NotFoundException('Reported user not found');
+      }
+    } else if (normalizedTargetType === 'message') {
+      const message = await this.prisma.message.findUnique({
+        where: { id: targetId },
+        include: {
+          conversation: {
+            include: {
+              members: true,
+            },
+          },
+        },
+      });
+      if (!message) {
+        throw new NotFoundException('Reported message not found');
+      }
+
+      const isParticipant = message.conversation.members.some(
+        (member) => member.userId === reporterId,
+      );
+      if (!isParticipant) {
+        throw new ForbiddenException('You cannot report a message outside your conversation');
+      }
+    } else if (normalizedTargetType === 'conversation') {
+      const conversation = await this.prisma.conversation.findUnique({
+        where: { id: targetId },
+        include: {
+          members: true,
+        },
+      });
+      if (!conversation) {
+        throw new NotFoundException('Conversation not found');
+      }
+
+      const isParticipant = conversation.members.some(
+        (member) => member.userId === reporterId,
+      );
+      if (!isParticipant) {
+        throw new ForbiddenException('You cannot report this conversation');
+      }
+    } else {
+      throw new BadRequestException('Unsupported report target type');
+    }
+
+    const report = await this.prisma.report.create({
+      data: {
+        reporterId,
+        targetType: normalizedTargetType,
+        targetId,
+        reason: normalizedReason,
+      },
     });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorId: reporterId,
+        action: 'submit_report',
+        targetType: 'report',
+        targetId: report.id,
+        metadata: {
+          reportedTargetType: normalizedTargetType,
+          reportedTargetId: targetId,
+        },
+      },
+    });
+
+    return report;
   }
 
   // ---- Helpers ----

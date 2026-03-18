@@ -2,7 +2,15 @@ export const ROLE_VALUES = ["EXPERT", "LEARNER", "ENTERPRISE_LEADER", "ADMIN"] a
 export const EMAIL_VISIBILITY_VALUES = ["PUBLIC", "MASKED", "HIDDEN"] as const;
 export const CONTENT_STATUS_VALUES = ["DRAFT", "PENDING_REVIEW", "PUBLISHED", "REJECTED"] as const;
 export const CONTENT_TYPE_VALUES = ["CONTEST", "PAPER", "POLICY", "PROJECT", "TOOL"] as const;
+export const CONTENT_DOMAIN_VALUES = ["HUB_ITEM", "ENTERPRISE_NEED", "RESEARCH_PROJECT"] as const;
 export const CONTENT_VISIBILITY_VALUES = ["ALL", "EXPERTS_LEARNERS"] as const;
+export const CONTENT_DETAIL_SECTION_KIND_VALUES = [
+  "SUMMARY",
+  "BACKGROUND",
+  "GOAL",
+  "DELIVERABLES",
+  "NEEDED_SUPPORT",
+] as const;
 export const DOCUMENT_STATUS_VALUES = ["PROCESSING", "READY", "FAILED"] as const;
 export const THREAD_STATUS_VALUES = ["PENDING", "ACCEPTED", "REJECTED"] as const;
 export const INVITE_STATUS_VALUES = ["UNUSED", "USED", "REVOKED"] as const;
@@ -74,11 +82,29 @@ const CONTENT_TYPE_ALIASES: AliasMap<typeof CONTENT_TYPE_VALUES> = {
   tool: "TOOL",
 };
 
+const CONTENT_DOMAIN_ALIASES: AliasMap<typeof CONTENT_DOMAIN_VALUES> = {
+  hub_item: "HUB_ITEM",
+  hubitem: "HUB_ITEM",
+  enterprise_need: "ENTERPRISE_NEED",
+  research_project: "RESEARCH_PROJECT",
+};
+
 const CONTENT_VISIBILITY_ALIASES: AliasMap<typeof CONTENT_VISIBILITY_VALUES> = {
   all: "ALL",
   public_all: "ALL",
   experts_learners: "EXPERTS_LEARNERS",
   experts_and_learners: "EXPERTS_LEARNERS",
+};
+
+const CONTENT_DETAIL_SECTION_KIND_ALIASES: AliasMap<
+  typeof CONTENT_DETAIL_SECTION_KIND_VALUES
+> = {
+  summary: "SUMMARY",
+  background: "BACKGROUND",
+  goal: "GOAL",
+  deliverables: "DELIVERABLES",
+  needed_support: "NEEDED_SUPPORT",
+  neededsupport: "NEEDED_SUPPORT",
 };
 
 const DOCUMENT_STATUS_ALIASES: AliasMap<typeof DOCUMENT_STATUS_VALUES> = {
@@ -146,6 +172,17 @@ export function normalizeContentTypeValue(value: unknown): EnumValue<typeof CONT
   return parseCanonicalEnumValue(value, CONTENT_TYPE_VALUES, "PROJECT", CONTENT_TYPE_ALIASES);
 }
 
+export function normalizeContentDomainValue(
+  value: unknown,
+): EnumValue<typeof CONTENT_DOMAIN_VALUES> {
+  return parseCanonicalEnumValue(
+    value,
+    CONTENT_DOMAIN_VALUES,
+    "HUB_ITEM",
+    CONTENT_DOMAIN_ALIASES,
+  );
+}
+
 export function normalizeContentVisibilityValue(
   value: unknown,
 ): EnumValue<typeof CONTENT_VISIBILITY_VALUES> {
@@ -154,6 +191,17 @@ export function normalizeContentVisibilityValue(
     CONTENT_VISIBILITY_VALUES,
     "ALL",
     CONTENT_VISIBILITY_ALIASES,
+  );
+}
+
+export function normalizeContentDetailSectionKindValue(
+  value: unknown,
+): EnumValue<typeof CONTENT_DETAIL_SECTION_KIND_VALUES> {
+  return parseCanonicalEnumValue(
+    value,
+    CONTENT_DETAIL_SECTION_KIND_VALUES,
+    "SUMMARY",
+    CONTENT_DETAIL_SECTION_KIND_ALIASES,
   );
 }
 

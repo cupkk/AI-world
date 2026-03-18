@@ -1,6 +1,6 @@
 # AI-World
 
-AI-World is a community platform for learners, experts, and enterprise leaders. The repository contains the React frontend, NestJS API, background worker, knowledge-base pipeline, and the Docker Compose deployment model used for `staging` and `production`.
+AI-World is a community platform for learners, experts, and enterprise leaders. This repository contains the React frontend, NestJS API, background worker, knowledge-base pipeline, and the production deployment assets used on the live server.
 
 ## Stack
 
@@ -15,7 +15,7 @@ AI-World is a community platform for learners, experts, and enterprise leaders. 
 - `server/`: API, Prisma schema, Docker Compose, ops scripts
 - `worker/`: asynchronous file-processing worker
 - `tests/e2e/`: local mocked Playwright tests
-- `tests/live/`: staging and production live smoke tests
+- `tests/live/`: production live smoke tests
 - `docs/`: deployment and acceptance documentation
 
 ## Local Development
@@ -57,23 +57,45 @@ Local development uses:
 - `.env.example`
 - `server/.env.example`
 
-Deployments use dedicated environment files:
+Production uses:
 
-- frontend build-time flags: `.env.production.example`, `.env.staging.example`
-- API and worker runtime envs: `server/.env.production.example`, `server/.env.staging.example`
+- frontend build-time flags: `.env.production.example`
+- API and worker runtime envs: `server/.env.production.example`
 
-Production and staging must both set:
+Production must set:
 
 - `REQUIRE_OSS=true`
 - `REQUIRE_SMTP=true`
-- `REQUIRE_LLM=true`
 - `ENABLE_DEMO_INVITES=false`
+- `ENABLE_PUBLIC_SAMPLE_INVITES=false`
 - `SEED_INCLUDE_DEMO_DATA=false`
 
-Frontend builds must disable demo mode:
+Frontend builds must disable demo mode and public sample invite UI:
 
 - `VITE_ENABLE_DEMO_MODE=false`
 - `VITE_ALLOW_DEMO_PREFILL=false`
+- `VITE_ENABLE_PUBLIC_SAMPLE_INVITES=false`
+
+Production must set assistant / knowledge-base flags explicitly on both sides:
+
+- frontend: `VITE_ENABLE_ASSISTANT`, `VITE_ENABLE_KNOWLEDGE_BASE`
+- backend: `ENABLE_ASSISTANT`, `ENABLE_KNOWLEDGE_BASE`
+
+If assistant is enabled for release, also set:
+
+- `REQUIRE_LLM=true`
+
+Run preflight before deploying:
+
+```bash
+npm run release:preflight:production
+```
+
+Point the preflight script at real env files when needed:
+
+```bash
+node ./scripts/release-preflight.mjs --mode production --frontend-file .env.production --backend-file server/.env.production
+```
 
 ## Testing
 
@@ -85,8 +107,6 @@ npm run build
 npx playwright test --project=chromium
 ```
 
-Local mocked E2E runs in fail-fast mode for unmocked `/api/**` traffic.
-
 ### Backend
 
 ```bash
@@ -97,11 +117,11 @@ npm test -- --runInBand
 
 ### Live Smoke
 
-Production smoke:
-
 ```bash
 set PRODUCTION_BASE_URL=https://ai-world.asia
 set PLAYWRIGHT_BASE_URL=https://ai-world.asia
+set LIVE_ENABLE_ASSISTANT=0
+set LIVE_ENABLE_KNOWLEDGE_BASE=0
 set LIVE_ADMIN_EMAIL=<admin-email>
 set LIVE_ADMIN_PASSWORD=<admin-password>
 set LIVE_LEARNER_EMAIL=<learner-email>
@@ -113,46 +133,14 @@ set LIVE_ENTERPRISE_PASSWORD=<enterprise-password>
 npm run test:live:prod-smoke
 ```
 
-Staging smoke:
-
-```bash
-set STAGING_BASE_URL=https://staging.ai-world.asia
-set PLAYWRIGHT_BASE_URL=https://staging.ai-world.asia
-set LIVE_ADMIN_EMAIL_STAGING=<admin-email>
-set LIVE_ADMIN_PASSWORD_STAGING=<admin-password>
-set LIVE_LEARNER_EMAIL_STAGING=<learner-email>
-set LIVE_LEARNER_PASSWORD_STAGING=<learner-password>
-set LIVE_EXPERT_EMAIL_STAGING=<expert-email>
-set LIVE_EXPERT_PASSWORD_STAGING=<expert-password>
-set LIVE_ENTERPRISE_EMAIL_STAGING=<enterprise-email>
-set LIVE_ENTERPRISE_PASSWORD_STAGING=<enterprise-password>
-npm run test:live:staging-smoke
-```
-
-Staging mutation:
-
-```bash
-set STAGING_BASE_URL=https://staging.ai-world.asia
-set PLAYWRIGHT_BASE_URL=https://staging.ai-world.asia
-set LIVE_ALLOW_MUTATIONS=1
-set LIVE_ADMIN_EMAIL_STAGING=<admin-email>
-set LIVE_ADMIN_PASSWORD_STAGING=<admin-password>
-set LIVE_LEARNER_EMAIL_STAGING=<learner-email>
-set LIVE_LEARNER_PASSWORD_STAGING=<learner-password>
-set LIVE_EXPERT_EMAIL_STAGING=<expert-email>
-set LIVE_EXPERT_PASSWORD_STAGING=<expert-password>
-set LIVE_ENTERPRISE_EMAIL_STAGING=<enterprise-email>
-set LIVE_ENTERPRISE_PASSWORD_STAGING=<enterprise-password>
-npm run test:live:staging-mutation
-```
+Set `LIVE_ENABLE_ASSISTANT=1` and/or `LIVE_ENABLE_KNOWLEDGE_BASE=1` only when those modules are intentionally opened in production.
 
 ## Deployment Model
 
-The repository uses a single ECS host with multiple Compose stacks:
+The repository uses a single ECS host with one production Compose stack:
 
 - `server/docker-compose.prod.yml`: production application stack
-- `server/docker-compose.staging.yml`: staging application stack
-- `server/ops/docker-compose.edge.yml`: edge nginx for `ai-world.asia`, `www.ai-world.asia`, and `staging.ai-world.asia`
+- `server/ops/docker-compose.edge.yml`: edge nginx for `ai-world.asia` and `www.ai-world.asia`
 - `server/ops/docker-compose.observability.yml`: Prometheus and Alertmanager
 
 Public exposure is limited to:
@@ -160,7 +148,7 @@ Public exposure is limited to:
 - `/ready`
 - `/health`
 
-`/metrics` is private and is scraped only over the Docker network.
+`/metrics` is private and scraped only over the Docker network.
 
 ## Deployment Scripts
 
@@ -169,45 +157,44 @@ Run from `server/` on the Linux host:
 ```bash
 chmod +x ./scripts/*.sh
 ./scripts/ensure-docker-networks.sh
-REGISTRY=<registry> IMAGE_TAG=<tag> ./scripts/deploy-stack.sh staging
-REGISTRY=<registry> IMAGE_TAG=<tag> ./scripts/deploy-stack.sh production
-REGISTRY=<registry> ./scripts/rollback-stack.sh production <previous-tag>
-./scripts/check-stack.sh production
+docker compose -f ./ops/docker-compose.edge.yml up -d
+docker compose -f ./ops/docker-compose.observability.yml up -d
+REGISTRY=<registry> IMAGE_TAG=<tag> ./scripts/deploy-stack.sh
+./scripts/check-stack.sh
 ./scripts/verify-observability.sh
+```
+
+Rollback:
+
+```bash
+REGISTRY=<registry> ./scripts/rollback-stack.sh <previous-tag>
 ```
 
 Certificate management:
 
 ```bash
-./scripts/issue-certificate.sh ai-world.asia www.ai-world.asia staging.ai-world.asia
+./scripts/issue-certificate.sh ai-world.asia www.ai-world.asia
 ```
 
 Database backup and restore:
 
 ```bash
-npm run ops:backup
-npm run ops:backup:staging
-./scripts/restore-db.sh production --dry-run
-./scripts/restore-db.sh staging --dry-run
+npm --prefix server run ops:backup
+./server/scripts/restore-db.sh --dry-run
 ```
 
-## GitHub Actions
+## CI
 
-The release chain is split into three workflows:
+The repository keeps a single CI workflow:
 
 - `ci.yml`: type checks, builds, unit tests, mocked E2E, Docker build checks
-- `deploy-staging.yml`: deploys `main` to staging and runs staging live smoke
-- `promote-production.yml`: promotes an image tag that already passed staging
-
-Required secrets are documented in [GitHub_Actions_Secrets.md](/d:/github/AI-world/docs/GitHub_Actions_Secrets.md).
 
 Recommended release sequence:
 
-1. Merge to `main` and wait for `CI` to pass.
-2. Run `Deploy Staging`.
-3. Complete the automated and manual checks in [上线运营清单.md](/d:/github/AI-world/docs/%E4%B8%8A%E7%BA%BF%E8%BF%90%E8%90%A5%E6%B8%85%E5%8D%95.md).
-4. Run `Promote Production` with the same commit SHA as `image_tag`.
-5. Record the release in [发布记录模板.md](/d:/github/AI-world/docs/%E5%8F%91%E5%B8%83%E8%AE%B0%E5%BD%95%E6%A8%A1%E6%9D%BF.md).
+1. Run local/browser regression and `npm run release:preflight:production`.
+2. Build and deploy directly to the production server.
+3. Run `npm run test:live:prod-smoke`.
+4. Record the release.
 
 ## Shared Contracts
 
@@ -224,15 +211,13 @@ When contract values change, update the shared definition first and then the fro
 - failure: returns HTTP `503`
 - machine-readable code: `errorCode: "ASSISTANT_UNAVAILABLE"`
 
-The frontend no longer falls back to a fake "local mode".
+The frontend no longer falls back to fake local recommendations.
 
 ## External Prerequisites
 
 The repository does not manage these cloud resources automatically:
 
 - fixed EIP for the ECS instance
-- DNS for `ai-world.asia`, `www.ai-world.asia`, `staging.ai-world.asia`
+- DNS for `ai-world.asia` and `www.ai-world.asia`
 - TLS certificate issuance and renewal
 - rotated SMTP, OSS, and LLM credentials
-
-Operational details are documented in [运维手册.md](/d:/github/AI-world/docs/%E8%BF%90%E7%BB%B4%E6%89%8B%E5%86%8C.md).

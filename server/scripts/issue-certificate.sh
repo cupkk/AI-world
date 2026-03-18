@@ -7,8 +7,8 @@ Usage:
   issue-certificate.sh [--dry-run] [--email ops@example.com] [--cert-name ai-world.asia] [--webroot-volume ops_certbot-webroot] domain [domain...]
 
 Examples:
-  ./scripts/issue-certificate.sh --dry-run ai-world.asia www.ai-world.asia staging.ai-world.asia
-  ./scripts/issue-certificate.sh --email ops@ai-world.asia ai-world.asia www.ai-world.asia staging.ai-world.asia
+  ./scripts/issue-certificate.sh --dry-run ai-world.asia www.ai-world.asia
+  ./scripts/issue-certificate.sh --email ops@ai-world.asia ai-world.asia www.ai-world.asia
 EOF
 }
 

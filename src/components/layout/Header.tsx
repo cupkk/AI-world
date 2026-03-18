@@ -4,14 +4,25 @@ import { useAuthStore } from "../../store/authStore";
 import { useSettingsStore } from "../../store/settingsStore";
 import { useTranslation } from "../../hooks/useTranslation";
 import { logoutByApi } from "../../lib/api";
+import { featureFlags } from "../../lib/features";
 import { Button } from "../ui/Button";
 import { Avatar } from "../ui/Avatar";
 import { MessageBadge } from "../ui/MessageBadge";
-import { BrainCircuit, Settings, Shield, Menu, X, Sun, Moon, Languages } from "lucide-react";
+import {
+  BrainCircuit,
+  Settings,
+  Shield,
+  Menu,
+  X,
+  Sun,
+  Moon,
+  Languages,
+  Upload,
+} from "lucide-react";
 
 export function Header() {
   const { user, logout } = useAuthStore();
-  const { theme, toggleTheme, toggleLanguage } = useSettingsStore();
+  const { theme, language, toggleTheme, toggleLanguage } = useSettingsStore();
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
@@ -84,13 +95,13 @@ export function Header() {
 
         <div className="flex items-center gap-2">
           {/* Toggles */}
-            <Button
+          <Button
             variant="ghost"
             size="icon"
             className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100"
             onClick={toggleLanguage}
-            title={t(theme === 'dark' ? "lang.zh" : "lang.en")}
-            aria-label={t(theme === 'dark' ? "lang.zh" : "lang.en")}
+            title={language === "zh" ? t("lang.en") : t("lang.zh")}
+            aria-label={language === "zh" ? t("lang.en") : t("lang.zh")}
           >
             <Languages className="h-5 w-5" />
           </Button>
@@ -106,16 +117,30 @@ export function Header() {
 
           {user ? (
             <>
-              <Link to="/assistant" className="hidden md:inline-flex">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-zinc-500 dark:text-zinc-400 hover:text-indigo-500 dark:hover:text-indigo-400"
-                  title={t("nav.ai_assistant")}
-                >
-                  <BrainCircuit className="h-5 w-5" />
-                </Button>
-              </Link>
+              {featureFlags.assistant ? (
+                <Link to="/assistant" className="hidden md:inline-flex">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-zinc-500 dark:text-zinc-400 hover:text-indigo-500 dark:hover:text-indigo-400"
+                    title={t("nav.ai_assistant")}
+                  >
+                    <BrainCircuit className="h-5 w-5" />
+                  </Button>
+                </Link>
+              ) : null}
+              {featureFlags.knowledgeBase ? (
+                <Link to="/settings/knowledge-base" className="hidden md:inline-flex">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="text-zinc-500 dark:text-zinc-400 hover:text-indigo-500 dark:hover:text-indigo-400"
+                    title={t("app.nav_knowledge_base")}
+                  >
+                    <Upload className="h-5 w-5" />
+                  </Button>
+                </Link>
+              ) : null}
               <MessageBadge />
               <Link to="/settings/profile" className="hidden md:inline-flex">
                 <Button
@@ -182,13 +207,24 @@ export function Header() {
                 {dashboardLink.label}
               </Link>
             )}
-            <Link
-              to="/assistant"
-              onClick={() => setMobileMenuOpen(false)}
-              className="block rounded-lg px-3 py-2 text-sm font-medium text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/50 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
-            >
-              {t("nav.ai_assistant")}
-            </Link>
+            {featureFlags.assistant ? (
+              <Link
+                to="/assistant"
+                onClick={() => setMobileMenuOpen(false)}
+                className="block rounded-lg px-3 py-2 text-sm font-medium text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/50 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
+              >
+                {t("nav.ai_assistant")}
+              </Link>
+            ) : null}
+            {featureFlags.knowledgeBase ? (
+              <Link
+                to="/settings/knowledge-base"
+                onClick={() => setMobileMenuOpen(false)}
+                className="block rounded-lg px-3 py-2 text-sm font-medium text-zinc-500 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/50 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
+              >
+                {t("app.nav_knowledge_base")}
+              </Link>
+            ) : null}
             <Link
               to="/settings/profile"
               onClick={() => setMobileMenuOpen(false)}

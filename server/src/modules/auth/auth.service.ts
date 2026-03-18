@@ -15,6 +15,7 @@ import { RegisterDto, LoginDto } from './auth.dto';
 import { serializeUser, serializeInvite } from '../../common/serializers/serialize';
 import {
   isProductionEnv,
+  isLocalDevelopmentEnv,
   parseBooleanFlag,
 } from '../../common/config/runtime.util';
 
@@ -65,7 +66,9 @@ export class AuthService {
   }
 
   private isDevMode(): boolean {
-    return !this.isProduction();
+    return isLocalDevelopmentEnv(
+      this.configService.get<string>('NODE_ENV', 'development'),
+    );
   }
 
   private getLoginRateLimitConfig() {
@@ -150,7 +153,7 @@ export class AuthService {
   private isPublicSampleInviteEnabled(): boolean {
     return parseBooleanFlag(
       this.configService.get<string>('ENABLE_PUBLIC_SAMPLE_INVITES'),
-      true,
+      this.isDevMode(),
     );
   }
 
@@ -479,6 +482,11 @@ export class AuthService {
             profileTags: { include: { tag: true } },
           },
         },
+        blocksGiven: {
+          select: {
+            blockedId: true,
+          },
+        },
       },
     });
 
@@ -522,6 +530,11 @@ export class AuthService {
             profileTags: {
               include: { tag: true },
             },
+          },
+        },
+        blocksGiven: {
+          select: {
+            blockedId: true,
           },
         },
       },

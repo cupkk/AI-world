@@ -16,12 +16,15 @@ test.describe("hub", () => {
         title: "Policy Sprint",
         description: "A project about policy automation.",
         type: "PROJECT",
+        contentDomain: "ENTERPRISE_NEED",
         status: "PUBLISHED",
         authorId: "author-1",
         createdAt: new Date("2026-03-14T10:00:00.000Z").toISOString(),
         tags: ["Policy", "Automation"],
         likes: 2,
         views: 8,
+        background: "Current policy review is fragmented across teams.",
+        goal: "Ship an automated policy workflow this quarter.",
         author: {
           id: "author-1",
           name: "Research Lead",
@@ -94,9 +97,20 @@ test.describe("hub", () => {
 
     await page.goto("/hub");
 
-    await expect(page.getByText("Policy Sprint")).toBeVisible();
-    await expect(page.getByText("Research Lead")).toBeVisible();
-    await expect(page.getByText("Paper Digest")).toBeVisible();
+    await expect.poll(() => hubRequests.length).toBeGreaterThan(0);
+    await expect(
+      page.getByRole("heading", { name: "Policy Sprint" }),
+    ).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("Research Lead")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("hub-card-domain-hub-1")).toContainText(
+      "Enterprise Need",
+    );
+    await expect(
+      page.getByTestId("hub-card-preview-hub-1-background"),
+    ).toContainText("Current policy review is fragmented across teams.");
+    await expect(
+      page.getByRole("heading", { name: "Paper Digest" }),
+    ).toBeVisible({ timeout: 10000 });
 
     await page
       .getByPlaceholder("Search papers, projects, tags...")
@@ -116,7 +130,11 @@ test.describe("hub", () => {
       )
       .toBeTruthy();
 
-    await expect(page.getByText("Policy Sprint")).toBeVisible();
-    await expect(page.getByText("Paper Digest")).not.toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Policy Sprint" }),
+    ).toBeVisible({ timeout: 10000 });
+    await expect(
+      page.getByRole("heading", { name: "Paper Digest" }),
+    ).not.toBeVisible();
   });
 });

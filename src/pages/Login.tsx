@@ -2,42 +2,27 @@ import { type ReactNode, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
-  type LucideIcon,
   ArrowRight,
-  ArrowUpRight,
   BrainCircuit,
-  Building2,
   CheckCircle2,
-  FlaskConical,
-  GraduationCap,
   Lock,
+  Languages,
   Mail,
-  MessagesSquare,
   Phone,
   ShieldCheck,
-  Ticket,
   User as UserIcon,
-  Workflow,
 } from "lucide-react";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { useTranslation } from "../hooks/useTranslation";
 import {
-  fetchPublicInviteSamplesByApi,
   loginByApi,
   registerByApi,
   verifyInviteCodeByApi,
 } from "../lib/api";
-import {
-  DEFAULT_PUBLIC_INVITE_SAMPLES,
-  getInviteSampleTestId,
-  INVITE_SAMPLE_DESCRIPTION_KEYS,
-} from "../lib/inviteSamples";
 import { usePageTitle } from "../lib/usePageTitle";
-import { formatRole } from "../lib/utils";
 import { useAuthStore } from "../store/authStore";
 import { useSettingsStore } from "../store/settingsStore";
-import type { PublicInviteSample } from "../types";
 
 function meetsPasswordRequirements(value: string) {
   return (
@@ -60,56 +45,13 @@ function isPasswordValidationError(message: string) {
   );
 }
 
-function getInviteSamplePresentation(
-  role: PublicInviteSample["role"],
-  isLight: boolean,
-): {
-  icon: LucideIcon;
-  cardClass: string;
-  iconWrapClass: string;
-} {
-  switch (role) {
-    case "EXPERT":
-      return {
-        icon: FlaskConical,
-        cardClass: isLight
-          ? "border-[#d7e1fb] bg-[#f7f9fe] hover:border-[#8ca3d9]"
-          : "border-[#30497d] bg-[#161d2b] hover:border-[#5578c5]",
-        iconWrapClass: isLight
-          ? "bg-[#e9f0ff] text-[#3454a1]"
-          : "bg-[#22396b] text-[#a9c0ff]",
-      };
-    case "ENTERPRISE_LEADER":
-      return {
-        icon: Building2,
-        cardClass: isLight
-          ? "border-[#e8ddc7] bg-[#faf6ef] hover:border-[#b9965c]"
-          : "border-[#5d4632] bg-[#231b15] hover:border-[#b9965c]",
-        iconWrapClass: isLight
-          ? "bg-[#f1e8d8] text-[#8b6a38]"
-          : "bg-[#3a2c21] text-[#f1cc93]",
-      };
-    case "LEARNER":
-    default:
-      return {
-        icon: GraduationCap,
-        cardClass: isLight
-          ? "border-[#d5e6da] bg-[#f4faf5] hover:border-[#5e8b6b]"
-          : "border-[#345543] bg-[#132018] hover:border-[#5e8b6b]",
-        iconWrapClass: isLight
-          ? "bg-[#e6f2e8] text-[#356349]"
-          : "bg-[#1f3b2b] text-[#98d4a5]",
-      };
-  }
-}
-
 export function Login() {
   const { t } = useTranslation();
   const tt = (key: string) => t(key as any);
   usePageTitle(t("page.login"));
 
   const { login, verifiedInviteCode, setVerifiedInviteCode } = useAuthStore();
-  const { theme } = useSettingsStore();
+  const { theme, language, setLanguage } = useSettingsStore();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -122,8 +64,6 @@ export function Login() {
   const [inviteError, setInviteError] = useState("");
   const [isVerifyingInvite, setIsVerifyingInvite] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [samples, setSamples] = useState<PublicInviteSample[]>(DEFAULT_PUBLIC_INVITE_SAMPLES);
-  const [isLoadingSamples, setIsLoadingSamples] = useState(false);
 
   useEffect(() => {
     setIsRegister(searchParams.get("tab") === "register");
@@ -134,31 +74,6 @@ export function Login() {
       setInviteCodeInput(verifiedInviteCode);
     }
   }, [verifiedInviteCode]);
-
-  useEffect(() => {
-    if (!isRegister) return;
-    let active = true;
-    setIsLoadingSamples(true);
-    void fetchPublicInviteSamplesByApi()
-      .then((items) => {
-        if (active && items.length > 0) {
-          setSamples(items);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setSamples(DEFAULT_PUBLIC_INVITE_SAMPLES);
-        }
-      })
-      .finally(() => {
-        if (active) {
-          setIsLoadingSamples(false);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, [isRegister]);
 
   const isLight = theme === "light";
   const needsInviteCode = isRegister && !verifiedInviteCode;
@@ -182,24 +97,19 @@ export function Login() {
   const pageClass = isLight
     ? "min-h-screen bg-[#efe8de] text-zinc-950"
     : "min-h-screen bg-[#111318] text-[#f4efe6]";
+  const languageShellClass = isLight
+    ? "inline-flex items-center gap-1 rounded-full border border-black/10 bg-white/80 p-1 text-sm shadow-sm"
+    : "inline-flex items-center gap-1 rounded-full border border-white/10 bg-[#171b21]/90 p-1 text-sm";
+  const languageIconClass = isLight ? "text-zinc-500" : "text-zinc-400";
+  const languageButtonClass = (active: boolean) =>
+    active
+      ? isLight
+        ? "rounded-full bg-[#1f2937] px-3 py-1.5 text-white"
+        : "rounded-full bg-[#2b4e93] px-3 py-1.5 text-white"
+      : isLight
+        ? "rounded-full px-3 py-1.5 text-zinc-600 hover:text-zinc-950"
+        : "rounded-full px-3 py-1.5 text-zinc-400 hover:text-white";
   const getPostAuthPath = (onboardingDone?: boolean) => (onboardingDone ? "/app" : "/onboarding");
-  const marketingItems = [
-    {
-      icon: ShieldCheck,
-      label: t("invite_page.perk_1"),
-      caption: tt("login.register_step_invite"),
-    },
-    {
-      icon: MessagesSquare,
-      label: t("invite_page.perk_2"),
-      caption: tt("login.register_step_account"),
-    },
-    {
-      icon: Workflow,
-      label: t("invite_page.perk_3"),
-      caption: tt("login.register_step_desc"),
-    },
-  ];
 
   const switchTab = (nextIsRegister: boolean) => {
     setIsRegister(nextIsRegister);
@@ -337,136 +247,10 @@ export function Login() {
                 </div>
               </Link>
 
-              <div className="max-w-2xl space-y-6">
-                <div
-                  className={
-                    isLight
-                      ? "inline-flex items-center gap-2 rounded-full border border-black/10 bg-white/80 px-4 py-2 text-xs font-medium tracking-[0.24em] text-zinc-700"
-                      : "inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-medium tracking-[0.24em] text-zinc-300"
-                  }
-                >
-                  <span
-                    className={
-                      isLight
-                        ? "h-2 w-2 rounded-full bg-[#3454a1]"
-                        : "h-2 w-2 rounded-full bg-[#89a5e2]"
-                    }
-                  />
-                  {t("login.invite_req")}
-                </div>
-
-                <div className="space-y-5">
-                  <h1 className="max-w-xl text-5xl font-semibold leading-[1.02] tracking-tight">
-                    {t("login.title")}
-                  </h1>
-                  <p className={`max-w-xl text-lg leading-8 ${mutedClass}`}>
-                    {t("login.invite_desc")}
-                  </p>
-                </div>
-
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {marketingItems.map((item, index) => {
-                    const Icon = item.icon;
-
-                    return (
-                      <div
-                        key={item.label}
-                        className={`rounded-[28px] border px-5 py-5 ${
-                          index === 0 ? "sm:col-span-2" : ""
-                        } ${
-                          isLight
-                            ? "border-black/10 bg-white/72"
-                            : "border-white/10 bg-black/20"
-                        }`}
-                      >
-                        <div className="flex items-start gap-4">
-                          <div
-                            className={
-                              isLight
-                                ? "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-[#eef2fb] text-[#3454a1]"
-                                : "flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-white/6 text-[#aec3f5]"
-                            }
-                          >
-                            <Icon className="h-5 w-5" />
-                          </div>
-                          <div className="space-y-2">
-                            <p className="text-lg font-semibold leading-6">
-                              {item.label}
-                            </p>
-                            <p className={`text-sm leading-6 ${mutedClass}`}>
-                              {item.caption}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <p className="text-[11px] uppercase tracking-[0.3em] text-zinc-500">
-                  {tt("login.sample_invites")}
-                </p>
-                <Link
-                  to="/invite"
-                  className={
-                    isLight
-                      ? "text-sm font-medium text-[#3454a1] underline-offset-4 hover:underline"
-                      : "text-sm font-medium text-[#a8bff0] underline-offset-4 hover:underline"
-                  }
-                >
-                  {tt("login.more_invites")}
-                </Link>
-              </div>
-
-              <div className="grid gap-3 xl:grid-cols-3">
-                {samples.slice(0, 3).map((sample) => {
-                  const presentation = getInviteSamplePresentation(
-                    sample.role,
-                    isLight,
-                  );
-                  const Icon = presentation.icon;
-
-                  return (
-                    <button
-                      key={`marketing-${sample.code}`}
-                      type="button"
-                      onClick={() => {
-                        setInviteCodeInput(sample.code);
-                        if (isRegister) {
-                          void handleVerifyInvite(sample.code);
-                        }
-                      }}
-                      className={`group rounded-[24px] border p-4 text-left transition-colors ${presentation.cardClass}`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div
-                          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${presentation.iconWrapClass}`}
-                        >
-                          <Icon className="h-5 w-5" />
-                        </div>
-                        <ArrowUpRight className="mt-1 h-4 w-4 shrink-0 text-zinc-400 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
-                      </div>
-                      <div className="mt-5 space-y-2">
-                        <p className="text-lg font-semibold tracking-tight">
-                          {formatRole(sample.role)}
-                        </p>
-                        <p className="font-mono text-[11px] uppercase tracking-[0.28em] text-zinc-500">
-                          {sample.code}
-                        </p>
-                        <p className={`text-sm leading-6 ${mutedClass}`}>
-                          {tt(
-                            INVITE_SAMPLE_DESCRIPTION_KEYS[sample.role] ??
-                              "invite_page.sample_desc",
-                          )}
-                        </p>
-                      </div>
-                    </button>
-                  );
-                })}
+              <div className="max-w-2xl space-y-4">
+                <h1 className="max-w-none whitespace-nowrap text-[clamp(3.2rem,4.6vw,5.2rem)] font-semibold leading-[0.96] tracking-tight">
+                  {t("login.title")}
+                </h1>
               </div>
             </div>
           </div>
@@ -474,6 +258,28 @@ export function Login() {
 
         <main className="flex items-center justify-center px-5 py-8 sm:px-8 lg:px-10">
           <div className="w-full max-w-[34rem]">
+            <div className="mb-4 flex justify-end">
+              <div className={languageShellClass}>
+                <Languages className={`mx-1 h-4 w-4 ${languageIconClass}`} />
+                <button
+                  type="button"
+                  data-testid="login-language-zh"
+                  className={languageButtonClass(language === "zh")}
+                  onClick={() => setLanguage("zh")}
+                >
+                  {t("lang.zh")}
+                </button>
+                <button
+                  type="button"
+                  data-testid="login-language-en"
+                  className={languageButtonClass(language === "en")}
+                  onClick={() => setLanguage("en")}
+                >
+                  {t("lang.en")}
+                </button>
+              </div>
+            </div>
+
             <div className="mb-6 space-y-5 lg:hidden">
               <Link to="/" className="flex w-fit items-center gap-3">
                 <div
@@ -491,20 +297,14 @@ export function Login() {
               </Link>
 
               <div className={`rounded-[28px] border p-5 ${mutedPanelClass}`}>
-                <p className="text-[11px] uppercase tracking-[0.28em] text-zinc-500">
-                  {t("login.invite_req")}
-                </p>
-                <h1 className="mt-3 text-3xl font-semibold tracking-tight">
+                <h1 className="text-3xl font-semibold tracking-tight">
                   {t("login.title")}
                 </h1>
-                <p className={`mt-3 text-sm leading-7 ${mutedClass}`}>
-                  {t("login.invite_desc")}
-                </p>
               </div>
             </div>
 
             <div className={`rounded-[32px] border p-5 sm:p-8 ${authPanelClass}`}>
-              <div className="flex items-start justify-between gap-4">
+              <div className="space-y-3">
                 <div className="space-y-3">
                   <p className="text-[11px] uppercase tracking-[0.32em] text-zinc-500">
                     {isRegister ? t("login.register_tab") : t("login.sign_in_tab")}
@@ -522,23 +322,6 @@ export function Login() {
                     </p>
                   </div>
                 </div>
-
-                {isRegister ? (
-                  <div
-                    className={
-                      isLight
-                        ? "hidden rounded-2xl border border-black/10 bg-[#f7f2eb] px-4 py-3 text-right sm:block"
-                        : "hidden rounded-2xl border border-white/10 bg-[#0f1216] px-4 py-3 text-right sm:block"
-                    }
-                  >
-                    <p className="text-[11px] uppercase tracking-[0.28em] text-zinc-500">
-                      2-step
-                    </p>
-                    <p className="mt-1 text-sm font-medium">
-                      {tt("login.register_step_invite")}
-                    </p>
-                  </div>
-                ) : null}
               </div>
 
               <div
@@ -596,9 +379,6 @@ export function Login() {
                       <p className="mt-3 text-lg font-semibold tracking-tight">
                         {tt("login.register_step_invite")}
                       </p>
-                      <p className={`mt-2 text-sm leading-6 ${mutedClass}`}>
-                        {tt("login.register_unlock_desc")}
-                      </p>
                     </div>
 
                     <div
@@ -618,41 +398,21 @@ export function Login() {
                       <p className="mt-3 text-lg font-semibold tracking-tight">
                         {tt("login.register_step_account")}
                       </p>
-                      <p className={`mt-2 text-sm leading-6 ${mutedClass}`}>
-                        {tt("login.register_step_desc")}
-                      </p>
                     </div>
                   </div>
 
                   {needsInviteCode ? (
-                    <div className={`rounded-[28px] border p-5 ${mutedPanelClass}`}>
-                      <div className="flex items-start gap-4">
-                        <div
-                          className={
-                            isLight
-                              ? "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#e9eef8] text-[#3454a1]"
-                              : "flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-[#1d2740] text-[#a8bff0]"
-                          }
-                        >
-                          <Ticket className="h-5 w-5" />
-                        </div>
-                        <div className="space-y-2">
-                          <h3 className="text-xl font-semibold tracking-tight">
-                            {tt("login.register_unlock_title")}
-                          </h3>
-                          <p className={`text-sm leading-7 ${mutedClass}`}>
-                            {tt("login.register_unlock_desc")}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+                    <div className={`rounded-[24px] border p-4 ${surfaceClass}`}>
+                      <label className="text-sm font-medium">
+                        {tt("login.register_step_invite")}
+                      </label>
+                      <div className="mt-3 flex flex-col gap-3 sm:flex-row">
                         <Input
                           data-testid="register-invite-input"
                           type="text"
                           value={inviteCodeInput}
                           onChange={(event) => setInviteCodeInput(event.target.value.toUpperCase())}
-                          placeholder="AIWORLD-EXPERT-2026"
+                          placeholder={t("invite_page.enter_placeholder")}
                           className={`h-12 flex-1 rounded-2xl pl-4 font-mono text-sm tracking-[0.12em] ${inputClass}`}
                         />
                         <Button
@@ -671,83 +431,6 @@ export function Login() {
                       {inviteError ? (
                         <p className="mt-3 text-sm text-rose-400">{inviteError}</p>
                       ) : null}
-
-                      <div className={`mt-6 rounded-[24px] border p-4 ${surfaceClass}`}>
-                        <div className="flex items-center justify-between gap-4">
-                          <div>
-                            <p className="text-sm font-semibold tracking-tight">
-                              {tt("login.sample_invites")}
-                            </p>
-                            <p className={`mt-1 text-sm leading-6 ${mutedClass}`}>
-                              {tt("login.sample_invite_hint")}
-                            </p>
-                          </div>
-                          <Link
-                            to="/invite"
-                            className={
-                              isLight
-                                ? "text-sm font-medium text-[#3454a1] underline-offset-4 hover:underline"
-                                : "text-sm font-medium text-[#a8bff0] underline-offset-4 hover:underline"
-                            }
-                          >
-                            {tt("login.more_invites")}
-                          </Link>
-                        </div>
-
-                        <div className="mt-4 space-y-3">
-                          {isLoadingSamples ? (
-                            <p className={`text-sm ${mutedClass}`}>
-                              {tt("invite_page.sample_loading")}
-                            </p>
-                          ) : (
-                            samples.map((sample) => {
-                              const presentation = getInviteSamplePresentation(
-                                sample.role,
-                                isLight,
-                              );
-                              const Icon = presentation.icon;
-
-                              return (
-                                <button
-                                  key={sample.code}
-                                  type="button"
-                                  data-testid={`login-sample-${getInviteSampleTestId(sample.role)}`}
-                                  onClick={() => void handleVerifyInvite(sample.code)}
-                                  className={`group w-full rounded-[22px] border p-4 text-left transition-colors ${presentation.cardClass}`}
-                                >
-                                  <div className="flex items-start gap-4">
-                                    <div
-                                      className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl ${presentation.iconWrapClass}`}
-                                    >
-                                      <Icon className="h-5 w-5" />
-                                    </div>
-
-                                    <div className="min-w-0 flex-1 space-y-1">
-                                      <div className="flex items-start justify-between gap-3">
-                                        <div>
-                                          <p className="text-lg font-semibold tracking-tight">
-                                            {formatRole(sample.role)}
-                                          </p>
-                                          <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.28em] text-zinc-500">
-                                            {sample.code}
-                                          </p>
-                                        </div>
-                                        <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-zinc-400 transition-transform group-hover:translate-x-1" />
-                                      </div>
-                                      <p className={`text-sm leading-6 ${mutedClass}`}>
-                                        {tt(
-                                          INVITE_SAMPLE_DESCRIPTION_KEYS[sample.role] ??
-                                            "invite_page.sample_desc",
-                                        )}
-                                      </p>
-                                    </div>
-                                  </div>
-                                </button>
-                              );
-                            })
-                          )}
-                        </div>
-                      </div>
                     </div>
                   ) : (
                     <>
@@ -976,7 +659,11 @@ export function Login() {
                 </div>
               )}
 
-              <div className="mt-6 flex flex-col gap-3 border-t border-black/10 pt-5 text-sm sm:flex-row sm:items-center sm:justify-between dark:border-white/10">
+              <div
+                className={`mt-6 flex flex-col gap-3 border-t border-black/10 pt-5 text-sm sm:flex-row sm:items-center ${
+                  isRegister ? "" : "sm:justify-between"
+                } dark:border-white/10`}
+              >
                 <button
                   type="button"
                   className={
@@ -989,18 +676,7 @@ export function Login() {
                   {isRegister ? t("login.sign_in_tab") : t("login.register_tab")}
                 </button>
 
-                {isRegister ? (
-                  <Link
-                    to="/invite"
-                    className={
-                      isLight
-                        ? "w-fit text-zinc-600 underline-offset-4 hover:text-zinc-950 hover:underline"
-                        : "w-fit text-zinc-400 underline-offset-4 hover:text-white hover:underline"
-                    }
-                  >
-                    {tt("login.more_invites")}
-                  </Link>
-                ) : (
+                {!isRegister ? (
                   <Link
                     to="/reset-password"
                     className={
@@ -1011,7 +687,7 @@ export function Login() {
                   >
                     {tt("login.forgot_password")}
                   </Link>
-                )}
+                ) : null}
               </div>
             </div>
           </div>

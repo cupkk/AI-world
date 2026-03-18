@@ -90,6 +90,45 @@ class QueryContentManagementDto {
   type?: string;
 }
 
+class QueryAuditLogsDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  q?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  action?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  targetType?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  limit?: string;
+}
+
+class QueryAdminUsersDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  q?: string;
+
+  @ApiPropertyOptional({ enum: ['active', 'pending_identity_review', 'suspended'] })
+  @IsOptional()
+  @IsString()
+  status?: string;
+
+  @ApiPropertyOptional({ enum: ['ADMIN', 'EXPERT', 'LEARNER', 'ENTERPRISE_LEADER'] })
+  @IsOptional()
+  @IsString()
+  role?: string;
+}
+
 class BatchContentManagementDto {
   @ApiProperty({ type: [String] })
   @IsArray()
@@ -168,6 +207,23 @@ export class AdminController {
   @ApiOperation({ summary: 'Aggregated data for admin content management' })
   async getContentManagement(@Query() query: QueryContentManagementDto) {
     return this.service.getContentManagement(query);
+  }
+
+  @Get('audit-logs')
+  @ApiOperation({ summary: 'List admin audit logs' })
+  async listAuditLogs(@Query() query: QueryAuditLogsDto) {
+    return this.service.listAuditLogs({
+      q: query.q,
+      action: query.action,
+      targetType: query.targetType,
+      limit: query.limit ? Number(query.limit) : undefined,
+    });
+  }
+
+  @Get('users')
+  @ApiOperation({ summary: 'List users for admin management' })
+  async listUsers(@Query() query: QueryAdminUsersDto) {
+    return this.service.listUsers(query);
   }
 
   @Patch('hub-items/:id')

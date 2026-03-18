@@ -3,29 +3,51 @@ import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class SearchTalentQueryDto {
-  @ApiPropertyOptional({ description: '关键词搜索（姓名/简介/机构）' })
+  @ApiPropertyOptional({ description: 'Keyword search' })
   @IsOptional()
   @IsString()
   q?: string;
 
-  @ApiPropertyOptional({ description: '标签过滤，逗号分隔' })
+  @ApiPropertyOptional({ description: 'Comma-separated tag names' })
   @IsOptional()
   @IsString()
   tags?: string;
 
-  @ApiPropertyOptional({ description: '角色过滤' })
+  @ApiPropertyOptional({ description: 'Location filter' })
+  @IsOptional()
+  @IsString()
+  location?: string;
+
+  @ApiPropertyOptional({ description: 'Organization filter' })
+  @IsOptional()
+  @IsString()
+  org?: string;
+
+  @ApiPropertyOptional({ description: 'Comma-separated platform intents' })
+  @IsOptional()
+  @IsString()
+  intents?: string;
+
+  @ApiPropertyOptional({ description: 'Role filter' })
   @IsOptional()
   @IsString()
   role?: string;
 
-  @ApiPropertyOptional({ description: '页码', default: 1 })
+  @ApiPropertyOptional({
+    description: 'Sort mode (relevance / newest / profile_strength / name)',
+  })
+  @IsOptional()
+  @IsString()
+  sort?: string;
+
+  @ApiPropertyOptional({ description: 'Page number', default: 1 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   page?: number;
 
-  @ApiPropertyOptional({ description: '每页条数', default: 20 })
+  @ApiPropertyOptional({ description: 'Items per page', default: 20 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()

@@ -10,6 +10,14 @@ const mockPrisma = {
     update: jest.fn(),
     count: jest.fn(),
   },
+  enterpriseNeed: {
+    findMany: jest.fn(),
+    findUnique: jest.fn(),
+  },
+  researchProject: {
+    findMany: jest.fn(),
+    findUnique: jest.fn(),
+  },
   application: {
     findUnique: jest.fn(),
   },
@@ -258,6 +266,13 @@ describe('HubService', () => {
           title: 'Policy Sprint',
           type: 'PROJECT',
         },
+        applicationTargetType: 'PROJECT',
+        detailSections: [
+          {
+            kind: 'SUMMARY',
+            content: 'A practical policy workflow.',
+          },
+        ],
         author: {
           id: 'author-1',
           name: 'Research Lead',
@@ -300,6 +315,216 @@ describe('HubService', () => {
           },
         }),
       );
+    });
+
+    it('should aggregate enterprise need detail semantics and application target type', async () => {
+      mockPrisma.hubItem.findUnique.mockResolvedValue(null);
+      mockPrisma.enterpriseNeed.findUnique.mockResolvedValue({
+        id: 'need-1',
+        title: 'Production Evaluation Need',
+        background: 'Need a shared evaluation baseline.',
+        goal: 'Ship a measurable workflow.',
+        deliverables: 'Benchmark rubric and weekly report.',
+        requiredRoles: ['EXPERT', 'LEARNER'],
+        visibility: 'public_all',
+        reviewStatus: 'published',
+        rejectReason: null,
+        createdAt: new Date('2026-03-14T10:00:00.000Z'),
+        enterpriseUserId: 'enterprise-1',
+        enterprise: {
+          id: 'enterprise-1',
+          email: 'enterprise@example.com',
+          role: 'ENTERPRISE_LEADER',
+          profile: {
+            displayName: 'Enterprise One',
+            avatarUrl: '',
+            headline: 'AI Lead',
+            emailVisibility: 'public',
+            profileTags: [],
+          },
+        },
+      });
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([
+        {
+          id: 'need-2',
+          title: 'Adjacent Need',
+          background: 'Need adjacent support.',
+          goal: null,
+          deliverables: null,
+          requiredRoles: ['EXPERT'],
+          visibility: 'public_all',
+          reviewStatus: 'published',
+          rejectReason: null,
+          createdAt: new Date('2026-03-13T10:00:00.000Z'),
+          enterpriseUserId: 'enterprise-2',
+          enterprise: {
+            id: 'enterprise-2',
+            email: 'enterprise-two@example.com',
+            role: 'ENTERPRISE_LEADER',
+            profile: {
+              displayName: 'Enterprise Two',
+              avatarUrl: '',
+              headline: 'Ops Lead',
+              emailVisibility: 'public',
+              profileTags: [],
+            },
+          },
+        },
+      ]);
+      mockPrisma.application.findUnique.mockResolvedValue({
+        id: 'app-need-1',
+        applicantUserId: 'viewer-1',
+        targetType: 'enterprise_need',
+        targetId: 'need-1',
+        message: 'I can help with the evaluation pipeline.',
+        status: 'submitted',
+        createdAt: new Date('2026-03-15T10:00:00.000Z'),
+      });
+
+      const result = await service.getDetail('need-1', {
+        id: 'viewer-1',
+        role: 'LEARNER',
+      });
+
+      expect(result).toMatchObject({
+        content: {
+          id: 'need-1',
+          contentDomain: 'ENTERPRISE_NEED',
+          type: 'PROJECT',
+        },
+        applicationTargetType: 'ENTERPRISE_NEED',
+        detailSections: [
+          {
+            kind: 'BACKGROUND',
+            content: 'Need a shared evaluation baseline.',
+          },
+          {
+            kind: 'GOAL',
+            content: 'Ship a measurable workflow.',
+          },
+          {
+            kind: 'DELIVERABLES',
+            content: 'Benchmark rubric and weekly report.',
+          },
+        ],
+        viewerApplication: {
+          id: 'app-need-1',
+          target: {
+            id: 'need-1',
+            targetType: 'ENTERPRISE_NEED',
+            contentDomain: 'ENTERPRISE_NEED',
+          },
+        },
+        relatedContents: [
+          {
+            id: 'need-2',
+            contentDomain: 'ENTERPRISE_NEED',
+          },
+        ],
+      });
+
+      expect(mockPrisma.application.findUnique).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            applicantUserId_targetType_targetId: {
+              applicantUserId: 'viewer-1',
+              targetType: 'enterprise_need',
+              targetId: 'need-1',
+            },
+          },
+        }),
+      );
+    });
+
+    it('should aggregate research project details with needed support sections', async () => {
+      mockPrisma.hubItem.findUnique.mockResolvedValue(null);
+      mockPrisma.enterpriseNeed.findUnique.mockResolvedValue(null);
+      mockPrisma.researchProject.findUnique.mockResolvedValue({
+        id: 'project-1',
+        title: 'Research Eval Sprint',
+        summary: 'Exploring evaluation ops.',
+        neededSupport: 'Need help on QA and prompt review.',
+        tags: ['Evaluation'],
+        reviewStatus: 'published',
+        rejectReason: null,
+        createdAt: new Date('2026-03-14T10:00:00.000Z'),
+        expertUserId: 'expert-1',
+        expert: {
+          id: 'expert-1',
+          email: 'expert@example.com',
+          role: 'EXPERT',
+          profile: {
+            displayName: 'Expert One',
+            avatarUrl: '',
+            headline: 'Research Lead',
+            emailVisibility: 'public',
+            profileTags: [],
+          },
+        },
+      });
+      mockPrisma.researchProject.findMany.mockResolvedValue([
+        {
+          id: 'project-2',
+          title: 'Related Research Project',
+          summary: 'More research.',
+          neededSupport: null,
+          tags: ['Evaluation'],
+          reviewStatus: 'published',
+          rejectReason: null,
+          createdAt: new Date('2026-03-13T10:00:00.000Z'),
+          expertUserId: 'expert-2',
+          expert: {
+            id: 'expert-2',
+            email: 'expert-two@example.com',
+            role: 'EXPERT',
+            profile: {
+              displayName: 'Expert Two',
+              avatarUrl: '',
+              headline: 'Scientist',
+              emailVisibility: 'public',
+              profileTags: [],
+            },
+          },
+        },
+      ]);
+      mockPrisma.application.findUnique.mockResolvedValue({
+        id: 'app-project-1',
+        applicantUserId: 'viewer-1',
+        targetType: 'research_project',
+        targetId: 'project-1',
+        message: 'I can help.',
+        status: 'submitted',
+        createdAt: new Date('2026-03-15T10:00:00.000Z'),
+      });
+
+      const result = await service.getDetail('project-1', {
+        id: 'viewer-1',
+        role: 'LEARNER',
+      });
+
+      expect(result).toMatchObject({
+        content: {
+          id: 'project-1',
+          contentDomain: 'RESEARCH_PROJECT',
+        },
+        applicationTargetType: 'RESEARCH_PROJECT',
+        detailSections: [
+          {
+            kind: 'SUMMARY',
+            content: 'Exploring evaluation ops.',
+          },
+          {
+            kind: 'NEEDED_SUPPORT',
+            content: 'Need help on QA and prompt review.',
+          },
+        ],
+        relatedContents: [
+          {
+            id: 'project-2',
+            contentDomain: 'RESEARCH_PROJECT',
+          },
+        ],
+      });
     });
   });
 

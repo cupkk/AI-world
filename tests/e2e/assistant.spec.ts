@@ -14,6 +14,15 @@ test.describe("assistant", () => {
         reply: "Expert One is a strong fit for your NLP question.",
         recommendedUserId: USERS.expert.id,
         recommendedContentId: "content-1",
+        knowledgeBaseReadyCount: 1,
+        knowledgeSources: [
+          {
+            fileId: "kb-1",
+            fileName: "nlp-notes.pdf",
+            excerpt: "Built production NLP copilots for enterprise search.",
+            score: 0.92,
+          },
+        ],
       },
       recommendedUser: USERS.expert,
       recommendedContent: {
@@ -28,6 +37,17 @@ test.describe("assistant", () => {
         likes: 12,
         views: 88,
       },
+      knowledgeBaseFiles: [
+        {
+          id: "kb-1",
+          userId: USERS.learner.id,
+          name: "nlp-notes.pdf",
+          size: 4096,
+          type: "application/pdf",
+          status: "READY",
+          uploadedAt: new Date().toISOString(),
+        },
+      ],
     });
 
     await page.goto("/assistant");
@@ -45,6 +65,12 @@ test.describe("assistant", () => {
     await expect(
       page.getByRole("button", { name: "View Details" }),
     ).toBeVisible();
+    await expect(page.getByTestId("assistant-kb-banner")).toContainText(
+      "Knowledge Base Status",
+    );
+    await expect(page.getByTestId("assistant-knowledge-source-0")).toContainText(
+      "nlp-notes.pdf",
+    );
   });
 
   test("shows an explicit unavailable state when the assistant service returns 503", async ({
@@ -53,6 +79,7 @@ test.describe("assistant", () => {
     await seedAuth(page, USERS.learner);
     await installStrictApiMocking(page);
     await mockAssistantApis(page, {
+      knowledgeBaseFiles: [],
       error: {
         status: 503,
         body: {

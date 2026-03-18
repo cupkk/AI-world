@@ -84,14 +84,17 @@ test.describe("admin hub", () => {
         {
           id: "hub-2",
           title: "Live Enterprise Project",
-          description: "Currently published",
+          description: "Pilot deliverables for phase one",
           type: "PROJECT",
+          contentDomain: "ENTERPRISE_NEED",
           status: "PUBLISHED",
           authorId: USERS.enterprise.id,
           createdAt: new Date("2026-03-13T12:00:00.000Z").toISOString(),
           tags: ["Enterprise"],
           likes: 6,
           views: 24,
+          background: "Legacy workflow is blocking rollout",
+          goal: "Ship the internal assistant pilot",
           author: {
             id: USERS.enterprise.id,
             name: USERS.enterprise.name,
@@ -113,6 +116,15 @@ test.describe("admin hub", () => {
     await expect(
       page.getByTestId("admin-hub-stat-draft").locator("p").nth(1),
     ).toHaveText("0");
+    await expect(page.getByTestId("admin-hub-domain-hub-2")).toContainText(
+      "Enterprise Need",
+    );
+    await expect(
+      page.getByTestId("admin-hub-preview-hub-2-background"),
+    ).toHaveText("Legacy workflow is blocking rollout");
+    await expect(page.getByTestId("admin-hub-preview-hub-2-goal")).toHaveText(
+      "Ship the internal assistant pilot",
+    );
 
     await page.getByTestId("admin-hub-unpublish-hub-2").click();
 

@@ -32,8 +32,12 @@ const mockPrisma: any = {
   invite: {
     create: jest.fn(),
   },
+  application: {
+    findMany: jest.fn(),
+  },
   auditLog: {
     create: jest.fn(),
+    findMany: jest.fn(),
   },
   report: {
     findMany: jest.fn(),
@@ -400,6 +404,204 @@ describe('AdminService', () => {
         expect.objectContaining({
           id: 'hub-paper',
           status: 'PUBLISHED',
+        }),
+      ]);
+    });
+  });
+
+  describe('listAuditLogs', () => {
+    it('returns enriched application governance audit logs', async () => {
+      mockPrisma.auditLog.findMany.mockResolvedValue([
+        {
+          id: 'log-1',
+          action: 'application_audit_suspend_owner',
+          targetType: 'application',
+          targetId: 'app-1',
+          actorId: 'admin-1',
+          createdAt: new Date('2026-03-17T10:00:00Z'),
+          metadata: { reason: 'Owner account is suspended.' },
+          actor: {
+            id: 'admin-1',
+            email: 'admin@example.com',
+            role: 'admin',
+            profile: {
+              displayName: 'Admin One',
+              avatarUrl: '',
+              emailVisibility: 'hidden',
+              profileTags: [],
+            },
+          },
+        },
+      ]);
+      mockPrisma.application.findMany.mockResolvedValue([
+        {
+          id: 'app-1',
+          targetType: 'research_project',
+          targetId: 'project-1',
+          status: 'submitted',
+          applicantUserId: 'learner-1',
+          applicant: {
+            id: 'learner-1',
+            email: 'learner@example.com',
+            role: 'learner',
+            profile: {
+              displayName: 'Learner One',
+              avatarUrl: '',
+              emailVisibility: 'hidden',
+              profileTags: [],
+            },
+          },
+        },
+      ]);
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([]);
+      mockPrisma.researchProject.findMany.mockResolvedValue([
+        {
+          id: 'project-1',
+          title: 'Research Sprint',
+          summary: 'A focused sprint',
+          neededSupport: 'Evaluation support',
+          tags: ['AI'],
+          reviewStatus: 'published',
+          expertUserId: 'expert-1',
+          createdAt: new Date('2026-03-16T00:00:00Z'),
+          expert: {
+            id: 'expert-1',
+            email: 'expert@example.com',
+            role: 'expert',
+            profile: {
+              displayName: 'Expert One',
+              avatarUrl: '',
+              emailVisibility: 'hidden',
+              profileTags: [],
+            },
+          },
+        },
+      ]);
+      mockPrisma.hubItem.findMany.mockResolvedValue([]);
+      mockPrisma.user.findMany.mockResolvedValue([]);
+      mockPrisma.report.findMany.mockResolvedValue([]);
+
+      const result = await service.listAuditLogs();
+
+      expect(mockPrisma.auditLog.findMany).toHaveBeenCalledWith({
+        where: {},
+        include: {
+          actor: {
+            include: {
+              profile: {
+                include: {
+                  profileTags: {
+                    include: {
+                      tag: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+      });
+      expect(result).toEqual([
+        expect.objectContaining({
+          id: 'log-1',
+          action: 'application_audit_suspend_owner',
+          targetType: 'APPLICATION',
+          actor: expect.objectContaining({
+            id: 'admin-1',
+            name: 'Admin One',
+          }),
+          reason: 'Owner account is suspended.',
+          target: expect.objectContaining({
+            id: 'project-1',
+            targetType: 'RESEARCH_PROJECT',
+            title: 'Research Sprint',
+          }),
+          application: expect.objectContaining({
+            id: 'app-1',
+            status: 'SUBMITTED',
+            applicant: expect.objectContaining({
+              id: 'learner-1',
+              name: 'Learner One',
+            }),
+            owner: expect.objectContaining({
+              id: 'expert-1',
+              name: 'Expert One',
+            }),
+          }),
+        }),
+      ]);
+    });
+
+    it('applies action, target type, and query filters', async () => {
+      mockPrisma.auditLog.findMany.mockResolvedValue([
+        {
+          id: 'log-user-1',
+          action: 'update_user_status',
+          targetType: 'user',
+          targetId: 'user-2',
+          actorId: 'admin-1',
+          createdAt: new Date('2026-03-17T11:00:00Z'),
+          metadata: { status: 'suspended' },
+          actor: {
+            id: 'admin-1',
+            email: 'admin@example.com',
+            role: 'admin',
+            profile: {
+              displayName: 'Admin One',
+              avatarUrl: '',
+              emailVisibility: 'hidden',
+              profileTags: [],
+            },
+          },
+        },
+      ]);
+      mockPrisma.application.findMany.mockResolvedValue([]);
+      mockPrisma.hubItem.findMany.mockResolvedValue([]);
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([]);
+      mockPrisma.researchProject.findMany.mockResolvedValue([]);
+      mockPrisma.user.findMany.mockResolvedValue([
+        {
+          id: 'user-2',
+          email: 'suspended@example.com',
+          role: 'learner',
+          status: 'suspended',
+          profile: {
+            displayName: 'Suspended User',
+            avatarUrl: '',
+            emailVisibility: 'hidden',
+            profileTags: [],
+          },
+        },
+      ]);
+      mockPrisma.report.findMany.mockResolvedValue([]);
+
+      const result = await service.listAuditLogs({
+        action: 'update_user_status',
+        targetType: 'USER',
+        q: 'suspended',
+        limit: 10,
+      });
+
+      expect(mockPrisma.auditLog.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            action: 'update_user_status',
+            targetType: 'user',
+          },
+          take: 200,
+        }),
+      );
+      expect(result).toEqual([
+        expect.objectContaining({
+          id: 'log-user-1',
+          target: expect.objectContaining({
+            id: 'user-2',
+            targetType: 'USER',
+            title: 'Suspended User',
+            status: 'SUSPENDED',
+          }),
         }),
       ]);
     });

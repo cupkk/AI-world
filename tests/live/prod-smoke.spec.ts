@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   getLiveCredentials,
   getMissingLiveCredentialsMessage,
+  isLiveFeatureEnabled,
 } from "./helpers/env";
 import { expectPostLogin, liveLogin } from "./helpers/session";
 
@@ -9,6 +10,8 @@ const admin = getLiveCredentials("ADMIN");
 const learner = getLiveCredentials("LEARNER");
 const expert = getLiveCredentials("EXPERT");
 const enterprise = getLiveCredentials("ENTERPRISE");
+const assistantEnabled = isLiveFeatureEnabled("ASSISTANT");
+const knowledgeBaseEnabled = isLiveFeatureEnabled("KNOWLEDGE_BASE");
 const missingCredentialMessages = [
   !admin ? getMissingLiveCredentialsMessage("ADMIN") : null,
   !learner ? getMissingLiveCredentialsMessage("LEARNER") : null,
@@ -33,11 +36,13 @@ test.describe("live smoke regression", () => {
 
     await page.goto("/admin/review");
     await expect(
-      page.getByText(/Admin Review Dashboard|Content Review/i).first(),
+      page
+        .getByText(/Admin Review Dashboard|Content Review|内容审核|管理审核看板/i)
+        .first(),
     ).toBeVisible();
   });
 
-  test("learner can reach publish, assistant, and knowledge base", async ({
+  test("learner can reach publish and respect sealed optional modules", async ({
     page,
   }) => {
     await liveLogin(page, learner!.email, learner!.password);
@@ -47,13 +52,22 @@ test.describe("live smoke regression", () => {
     await expect(page.getByTestId("publish-new-content-btn")).toBeVisible();
 
     await page.goto("/assistant");
-    await expect(page.getByTestId("assistant-input")).toBeVisible();
+    if (assistantEnabled) {
+      await expect(page.getByTestId("assistant-input")).toBeVisible();
+    } else {
+      await expect(page).not.toHaveURL(/\/assistant(?:\/|$)/);
+      await expect(page.getByTestId("assistant-input")).toHaveCount(0);
+    }
 
     await page.goto("/settings/knowledge-base");
-    await expect(page.getByText(/Knowledge Base/i).first()).toBeVisible();
-    await expect(
-      page.getByText(/Upload Document|Click or drag/i).first(),
-    ).toBeVisible();
+    if (knowledgeBaseEnabled) {
+      await expect(page.getByText(/Knowledge Base|知识库/i).first()).toBeVisible();
+      await expect(
+        page.getByText(/Upload Document|Click or drag|上传|点击或拖拽/i).first(),
+      ).toBeVisible();
+    } else {
+      await expect(page).toHaveURL(/\/settings\/profile$/);
+    }
   });
 
   test("expert can reach messages", async ({ page }) => {
@@ -61,7 +75,7 @@ test.describe("live smoke regression", () => {
     await expectPostLogin(page);
 
     await page.goto("/messages");
-    await expect(page.getByText(/Messages/i).first()).toBeVisible();
+    await expect(page.getByText(/Messages|消息/i).first()).toBeVisible();
   });
 
   test("enterprise leader can reach the enterprise dashboard", async ({
@@ -72,7 +86,7 @@ test.describe("live smoke regression", () => {
 
     await page.goto("/app/enterprise");
     await expect(
-      page.getByRole("heading", { name: /Enterprise Dashboard/i }),
+      page.getByRole("heading", { name: /Enterprise Dashboard|企业控制台/i }),
     ).toBeVisible();
   });
 });

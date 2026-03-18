@@ -4,9 +4,9 @@ set -euo pipefail
 aiworld_require_stack() {
   local stack="${1:-}"
   case "$stack" in
-    production|staging) ;;
+    production) ;;
     *)
-      echo "Unsupported stack: ${stack}. Use production or staging." >&2
+      echo "Unsupported stack: ${stack}. Use production." >&2
       exit 1
       ;;
   esac
@@ -27,21 +27,13 @@ aiworld_stack_postgres_container() {
 aiworld_stack_default_db_name() {
   local stack="${1}"
   aiworld_require_stack "$stack"
-  if [ "$stack" = "production" ]; then
-    echo "aiworld"
-  else
-    echo "aiworld_staging"
-  fi
+  echo "aiworld"
 }
 
 aiworld_stack_default_base_url() {
   local stack="${1}"
   aiworld_require_stack "$stack"
-  if [ "$stack" = "production" ]; then
-    echo "https://ai-world.asia"
-  else
-    echo "https://staging.ai-world.asia"
-  fi
+  echo "https://ai-world.asia"
 }
 
 aiworld_stack_default_backup_dir() {

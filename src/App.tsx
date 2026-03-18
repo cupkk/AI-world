@@ -3,6 +3,7 @@ import { useEffect, lazy, Suspense } from "react";
 import { Toaster } from "sonner";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { AuthGuard, PublicGuard, RoleGuard, AppRedirect } from "./components/guards";
+import { featureFlags } from "./lib/features";
 import { useSettingsStore } from "./store/settingsStore";
 
 const MainLayout = lazy(() =>
@@ -63,7 +64,9 @@ const Review = lazy(() =>
 const AdminHub = lazy(() =>
   import("./pages/admin/AdminHub").then((module) => ({ default: module.AdminHub })),
 );
-const Invite = lazy(() => import("./pages/Invite").then((module) => ({ default: module.Invite })));
+const AdminUsers = lazy(() =>
+  import("./pages/admin/Users").then((module) => ({ default: module.Users })),
+);
 const Onboarding = lazy(() =>
   import("./pages/Onboarding").then((module) => ({ default: module.Onboarding })),
 );
@@ -100,7 +103,14 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/login" replace />} />
             <Route path="/login" element={<PublicGuard><Login /></PublicGuard>} />
-            <Route path="/invite" element={<PublicGuard><Invite /></PublicGuard>} />
+            <Route
+              path="/invite"
+              element={
+                <PublicGuard>
+                  <Navigate to="/login?tab=register" replace />
+                </PublicGuard>
+              }
+            />
             <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/onboarding" element={<AuthGuard><Onboarding /></AuthGuard>} />
 
@@ -116,7 +126,16 @@ export default function App() {
               <Route path="/talent" element={<Talent />} />
               <Route path="/u/:id" element={<Profile />} />
               <Route path="/messages" element={<Messages />} />
-              <Route path="/assistant" element={<Assistant />} />
+              <Route
+                path="/assistant"
+                element={
+                  featureFlags.assistant ? (
+                    <Assistant />
+                  ) : (
+                    <Navigate to="/app" replace />
+                  )
+                }
+              />
               <Route path="/publish" element={<Publish />} />
               <Route path="/publish/:id" element={<PublishDetail />} />
 
@@ -135,12 +154,22 @@ export default function App() {
               <Route path="/settings" element={<SettingsLayout />}>
                 <Route index element={<Navigate to="profile" replace />} />
                 <Route path="profile" element={<ProfileEdit />} />
-                <Route path="knowledge-base" element={<KnowledgeBase />} />
+                <Route
+                  path="knowledge-base"
+                  element={
+                    featureFlags.knowledgeBase ? (
+                      <KnowledgeBase />
+                    ) : (
+                      <Navigate to="/settings/profile" replace />
+                    )
+                  }
+                />
                 <Route path="contacts" element={<Contacts />} />
               </Route>
 
               <Route path="/admin/review" element={<RoleGuard allowedRoles={["ADMIN"]}><Review /></RoleGuard>} />
               <Route path="/admin/hub" element={<RoleGuard allowedRoles={["ADMIN"]}><AdminHub /></RoleGuard>} />
+              <Route path="/admin/users" element={<RoleGuard allowedRoles={["ADMIN"]}><AdminUsers /></RoleGuard>} />
             </Route>
 
             <Route path="*" element={<NotFound />} />

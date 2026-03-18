@@ -13,14 +13,15 @@ import { Input } from "../components/ui/Input";
 import { Button } from "../components/ui/Button";
 import { Avatar } from "../components/ui/Avatar";
 import { EmptyState, LoadingSkeleton, ErrorState } from "../components/ui/StateDisplay";
-import { Send, Search, Check, X, ShieldAlert, User, Flag, ArrowLeft, Ban } from "lucide-react";
+import { Send, Search, Check, X, ShieldAlert, User as UserIcon, Flag, ArrowLeft, Ban } from "lucide-react";
 import { usePageTitle } from "../lib/usePageTitle";
 import { useTranslation } from "../hooks/useTranslation";
-import type { ChatThread, Message } from "../types";
+import type { ChatThread, Message, User } from "../types";
 import {
   acceptMessageRequestByApi,
   blockUserByApi,
   createMessageRequestByApi,
+  fetchBlockedUsersByApi,
   fetchConversationMessagesByApi,
   fetchMessageConversationsByApi,
   fetchMessageRequestsByApi,
@@ -29,6 +30,7 @@ import {
   rejectMessageRequestByApi,
   reportByApi,
   sendConversationMessageByApi,
+  unblockUserByApi,
 } from "../lib/api";
 import { closeMessageSocket, getMessageSocket } from "../lib/ws";
 
@@ -44,8 +46,14 @@ export function Messages() {
   const [showReportForm, setShowReportForm] = useState(false);
   const [reportReason, setReportReason] = useState("");
   const [reportDetail, setReportDetail] = useState("");
+  const [reportTarget, setReportTarget] = useState<{
+    type: "user" | "message" | "conversation";
+    id: string;
+    label: string;
+  } | null>(null);
   const [apiThreads, setApiThreads] = useState<ChatThread[]>([]);
   const [apiMessagesByThread, setApiMessagesByThread] = useState<Record<string, Message[]>>({});
+  const [blockedUsers, setBlockedUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
 
@@ -81,15 +89,18 @@ export function Messages() {
       setIsLoading(true);
       setHasError(false);
       try {
-        const [conversations, requests] = await Promise.all([
+        const [conversations, requests, blocked] = await Promise.all([
           fetchMessageConversationsByApi(user.id),
           fetchMessageRequestsByApi(user.id),
+          fetchBlockedUsersByApi(),
         ]);
         if (!active) return;
         setApiThreads(mergeThreadsById([...conversations, ...requests]));
+        setBlockedUsers(blocked);
       } catch {
         if (!active) return;
         setApiThreads([]);
+        setBlockedUsers([]);
         setHasError(true);
       } finally {
         if (active) setIsLoading(false);
@@ -270,12 +281,36 @@ export function Messages() {
     };
   }, [searchParams, user, apiThreads, t]);
 
+  useEffect(() => {
+    setShowBlockConfirm(false);
+    setShowReportForm(false);
+    setReportTarget(null);
+    setReportReason("");
+    setReportDetail("");
+  }, [selectedThreadId]);
+
   if (!user) return null;
-  if (hasError) return <ErrorState onRetry={() => { setHasError(false); setIsLoading(true); Promise.all([fetchMessageConversationsByApi(user.id), fetchMessageRequestsByApi(user.id)]).then(([c, r]) => setApiThreads(mergeThreadsById([...c, ...r]))).catch(() => setHasError(true)).finally(() => setIsLoading(false)); }} />;
+  if (hasError) return <ErrorState onRetry={() => {
+    setHasError(false);
+    setIsLoading(true);
+    Promise.all([
+      fetchMessageConversationsByApi(user.id),
+      fetchMessageRequestsByApi(user.id),
+      fetchBlockedUsersByApi(),
+    ])
+      .then(([c, r, blocked]) => {
+        setApiThreads(mergeThreadsById([...c, ...r]));
+        setBlockedUsers(blocked);
+      })
+      .catch(() => setHasError(true))
+      .finally(() => setIsLoading(false));
+  }} />;
   if (isLoading) return <LoadingSkeleton />;
 
   // Get threads for current user, filtered by search & blocked users
-  const blockedIds = user.blockedUsers || [];
+  const blockedIds = Array.from(
+    new Set([...(user.blockedUsers || []), ...blockedUsers.map((item) => item.id)]),
+  );
   const myThreads = apiThreads.filter(t => {
     if (!t.participants.some(p => p.id === user.id)) return false;
     const other = t.participants.find(p => p.id !== user.id);
@@ -416,8 +451,31 @@ export function Messages() {
     }
   };
 
+  const handleUnblock = async (blockedUser: User) => {
+    try {
+      await unblockUserByApi(blockedUser.id);
+      setBlockedUsers((prev) => prev.filter((item) => item.id !== blockedUser.id));
+      login({
+        ...user,
+        blockedUsers: (user.blockedUsers || []).filter((id) => id !== blockedUser.id),
+      });
+      toast.success((t("msg.user_unblocked") as string).replace("{name}", blockedUser.name));
+    } catch {
+      toast.error(t("api.request_failed"));
+    }
+  };
+
+  const openReportForm = (target: {
+    type: "user" | "message" | "conversation";
+    id: string;
+    label: string;
+  }) => {
+    setReportTarget(target);
+    setShowReportForm(true);
+  };
+
   const handleSubmitReport = async () => {
-    if (!selectedUser || !selectedThreadId) return;
+    if (!reportTarget) return;
     if (!reportReason.trim()) {
       toast.error(t("msg.report_reason_required"));
       return;
@@ -425,8 +483,8 @@ export function Messages() {
 
     try {
       await reportByApi({
-        targetType: "user",
-        targetId: selectedUser.id,
+        targetType: reportTarget.type,
+        targetId: reportTarget.id,
         reason: reportDetail.trim()
           ? `${reportReason.trim()}: ${reportDetail.trim()}`
           : reportReason.trim(),
@@ -437,6 +495,7 @@ export function Messages() {
     }
 
     setShowReportForm(false);
+    setReportTarget(null);
     setReportReason("");
     setReportDetail("");
     toast.success(t("msg.report_submitted"));
@@ -556,6 +615,43 @@ export function Messages() {
               );
             });
           })()}
+
+          {blockedUsers.length > 0 ? (
+            <div className="border-t border-white/10">
+              <div className="px-4 py-2 bg-zinc-950/60">
+                <p className="text-xs font-medium text-zinc-400">
+                  {t("msg.blocked_users")} ({blockedUsers.length})
+                </p>
+              </div>
+              {blockedUsers.map((blockedUser) => (
+                <div
+                  key={blockedUser.id}
+                  className="flex items-center gap-3 border-b border-white/5 p-4"
+                >
+                  <Avatar
+                    src={blockedUser.avatar}
+                    fallback={blockedUser.name.charAt(0)}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-zinc-100">
+                      {blockedUser.name}
+                    </p>
+                    <p className="truncate text-xs text-zinc-500">
+                      {blockedUser.title || formatRole(blockedUser.role)}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 border-white/10 text-xs"
+                    onClick={() => void handleUnblock(blockedUser)}
+                  >
+                    {t("msg.unblock")}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -584,7 +680,7 @@ export function Messages() {
               <div className="flex items-center gap-1">
                 <Link to={`/u/${selectedUser.id}`}>
                   <Button variant="ghost" size="sm" className="gap-1.5 text-zinc-400 hover:text-zinc-100">
-                    <User className="h-4 w-4" />
+                    <UserIcon className="h-4 w-4" />
                     {t("common.profile")}
                   </Button>
                 </Link>
@@ -600,9 +696,30 @@ export function Messages() {
                 <Button
                   variant="ghost"
                   size="icon"
+                  className="text-zinc-500 hover:text-amber-300"
+                  title={t("msg.report_conversation")}
+                  onClick={() =>
+                    openReportForm({
+                      type: "conversation",
+                      id: selectedThread.id,
+                      label: selectedUser.name,
+                    })
+                  }
+                >
+                  <ShieldAlert className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
                   className="text-zinc-500 hover:text-red-400"
                   title={t("msg.report_user")}
-                  onClick={() => setShowReportForm((v) => !v)}
+                  onClick={() =>
+                    openReportForm({
+                      type: "user",
+                      id: selectedUser.id,
+                      label: selectedUser.name,
+                    })
+                  }
                 >
                   <Flag className="h-4 w-4" />
                 </Button>
@@ -618,6 +735,12 @@ export function Messages() {
                   <Button size="sm" variant="outline" className="h-7 text-xs border-red-500/30 text-red-400 hover:bg-red-500/10" onClick={async () => {
                     try {
                       await blockUserByApi(selectedUser.id);
+                      setBlockedUsers((prev) => {
+                        if (prev.some((item) => item.id === selectedUser.id)) {
+                          return prev;
+                        }
+                        return [selectedUser, ...prev];
+                      });
                       login({ ...user, blockedUsers: [...new Set([...(blockedIds || []), selectedUser.id])] });
                       setShowBlockConfirm(false);
                       setSelectedThreadId(null);
@@ -639,7 +762,12 @@ export function Messages() {
 
             {showReportForm && (
               <div className="border-b border-amber-500/20 bg-amber-500/5 px-4 py-3 space-y-3">
-                <p className="text-sm text-amber-300 font-medium">{t("msg.report_user_title")}</p>
+                <p className="text-sm text-amber-300 font-medium">{t("msg.report_title")}</p>
+                {reportTarget ? (
+                  <p className="text-xs text-amber-100/80">
+                    {t("msg.report_target_prefix")} {reportTarget.label}
+                  </p>
+                ) : null}
                 <Input
                   value={reportReason}
                   onChange={(e) => setReportReason(e.target.value)}
@@ -658,6 +786,7 @@ export function Messages() {
                     variant="ghost"
                     onClick={() => {
                       setShowReportForm(false);
+                      setReportTarget(null);
                       setReportReason("");
                       setReportDetail("");
                     }}
@@ -706,6 +835,22 @@ export function Messages() {
                           minute: "2-digit",
                         })}
                       </span>
+                      {!isMe ? (
+                        <button
+                          type="button"
+                          className="mt-2 inline-flex items-center gap-1 text-[10px] text-zinc-500 transition-colors hover:text-amber-300"
+                          onClick={() =>
+                            openReportForm({
+                              type: "message",
+                              id: msg.id,
+                              label: msg.content.slice(0, 36),
+                            })
+                          }
+                        >
+                          <Flag className="h-3 w-3" />
+                          {t("msg.report_message")}
+                        </button>
+                      ) : null}
                     </div>
                   </div>
                 );

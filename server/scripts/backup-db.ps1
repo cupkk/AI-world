@@ -1,6 +1,4 @@
 param(
-  [ValidateSet('production', 'staging')]
-  [string]$Stack = 'production',
   [string]$ContainerName,
   [string]$DbName,
   [string]$DbUser = 'aiworld',
@@ -10,15 +8,15 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not $ContainerName) {
-  $ContainerName = if ($Stack -eq 'production') { 'aiworld-production-postgres-1' } else { 'aiworld-staging-postgres-1' }
+  $ContainerName = 'aiworld-production-postgres-1'
 }
 
 if (-not $DbName) {
-  $DbName = if ($Stack -eq 'production') { 'aiworld' } else { 'aiworld_staging' }
+  $DbName = 'aiworld'
 }
 
 if (-not $OutputDir) {
-  $OutputDir = Join-Path '/opt/aiworld/backups' $Stack
+  $OutputDir = '/opt/aiworld/backups/production'
 }
 
 $runningContainer = docker ps --format '{{.Names}}' | Where-Object { $_ -eq $ContainerName }
@@ -44,6 +42,6 @@ if ($LASTEXITCODE -ne 0) {
 
 $hash = Get-FileHash -Path $outputFile -Algorithm SHA256
 Write-Host "Backup completed"
-Write-Host "Stack: $Stack"
+Write-Host 'Stack: production'
 Write-Host "File: $outputFile"
 Write-Host "SHA256: $($hash.Hash)"

@@ -149,6 +149,24 @@ describe('AuthService', () => {
       );
     });
 
+    it('should reject public sample invites in production when not explicitly enabled', async () => {
+      mockConfig.get.mockImplementation((key: string, fallback?: any) => {
+        const map: Record<string, string> = {
+          NODE_ENV: 'production',
+          ENABLE_PUBLIC_SAMPLE_INVITES: '',
+          PUBLIC_SAMPLE_INVITES:
+            'EXPERT:AIWORLD-EXPERT-2026,LEARNER:AIWORLD-LEARNER-2026',
+        };
+        return map[key] ?? fallback;
+      });
+
+      mockPrisma.invite.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.verifyInviteCode('AIWORLD-EXPERT-2026'),
+      ).rejects.toThrow(BadRequestException);
+    });
+
     it('should expose public sample invites in production when enabled', async () => {
       mockConfig.get.mockImplementation((key: string, fallback?: any) => {
         const map: Record<string, string> = {

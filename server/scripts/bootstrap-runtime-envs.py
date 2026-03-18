@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = ROOT.parent
 
 
 def parse_env(path: Path) -> dict[str, str]:
@@ -38,13 +40,47 @@ def build_database_url(user: str, password: str, database: str) -> str:
     return f"postgresql://{user}:{password}@postgres:5432/{database}?schema=public"
 
 
+def pick_env_value(
+    key: str,
+    *sources: dict[str, str],
+    default: str = "",
+) -> str:
+    env_value = os.environ.get(key)
+    if env_value is not None and env_value != "":
+        return env_value
+
+    for source in sources:
+        value = source.get(key)
+        if value is not None and value != "":
+            return value
+
+    return default
+
+
 def main() -> None:
     compose_env = parse_env(ROOT / ".env")
     app_env = parse_env(ROOT / ".env.local")
+    existing_production_env = parse_env(ROOT / ".env.production")
+    existing_frontend_production_env = parse_env(PROJECT_ROOT / ".env.production")
 
-    postgres_user = compose_env.get("POSTGRES_USER", "aiworld")
-    postgres_password = compose_env.get("POSTGRES_PASSWORD", "change-me")
-    redis_url = compose_env.get("REDIS_URL", "redis://redis:6379")
+    postgres_user = pick_env_value(
+        "POSTGRES_USER",
+        compose_env,
+        existing_production_env,
+        default="aiworld",
+    )
+    postgres_password = pick_env_value(
+        "POSTGRES_PASSWORD",
+        compose_env,
+        existing_production_env,
+        default="change-me",
+    )
+    redis_url = pick_env_value(
+        "REDIS_URL",
+        compose_env,
+        existing_production_env,
+        default="redis://redis:6379",
+    )
 
     shared_keys = [
         "API_PORT",
@@ -82,12 +118,30 @@ def main() -> None:
     ]
 
     shared_values = {
-        key: app_env[key]
+        key: pick_env_value(key, app_env, existing_production_env)
         for key in shared_keys
-        if key in app_env and app_env[key] != ""
+        if pick_env_value(key, app_env, existing_production_env) != ""
     }
 
-    production_db = compose_env.get("POSTGRES_DB", "aiworld")
+    enable_assistant = pick_env_value(
+        "ENABLE_ASSISTANT",
+        app_env,
+        existing_production_env,
+        default="false",
+    )
+    enable_knowledge_base = pick_env_value(
+        "ENABLE_KNOWLEDGE_BASE",
+        app_env,
+        existing_production_env,
+        default="false",
+    )
+
+    production_db = pick_env_value(
+        "POSTGRES_DB",
+        compose_env,
+        existing_production_env,
+        default="aiworld",
+    )
     production = {
         "NODE_ENV": "production",
         **shared_values,
@@ -102,33 +156,41 @@ def main() -> None:
         "LOGIN_RATE_LIMIT_WINDOW_SECONDS": "60",
         "ENABLE_DEMO_INVITES": "false",
         "DEMO_INVITE_CODES": "",
-        "ENABLE_PUBLIC_SAMPLE_INVITES": "true",
-        "PUBLIC_SAMPLE_INVITES": "EXPERT:AIWORLD-EXPERT-2026,LEARNER:AIWORLD-LEARNER-2026,ENTERPRISE_LEADER:AIWORLD-ENTERPRISE-2026",
+        "ENABLE_PUBLIC_SAMPLE_INVITES": "false",
+        "PUBLIC_SAMPLE_INVITES": "",
+        "ENABLE_ASSISTANT": enable_assistant,
+        "ENABLE_KNOWLEDGE_BASE": enable_knowledge_base,
         "SEED_INCLUDE_DEMO_DATA": "false",
     }
 
-    staging_db = "aiworld_staging"
-    staging = {
-        "NODE_ENV": "staging",
-        **shared_values,
-        "POSTGRES_USER": postgres_user,
-        "POSTGRES_PASSWORD": postgres_password,
-        "POSTGRES_DB": staging_db,
-        "DATABASE_URL": build_database_url(postgres_user, postgres_password, staging_db),
-        "REDIS_URL": redis_url,
-        "CORS_ORIGIN": "https://staging.ai-world.asia",
-        "APP_URL": "https://staging.ai-world.asia",
-        "LOGIN_RATE_LIMIT_MAX": "20",
-        "LOGIN_RATE_LIMIT_WINDOW_SECONDS": "60",
-        "ENABLE_DEMO_INVITES": "false",
-        "DEMO_INVITE_CODES": "",
-        "ENABLE_PUBLIC_SAMPLE_INVITES": "true",
-        "PUBLIC_SAMPLE_INVITES": "EXPERT:AIWORLD-EXPERT-2026,LEARNER:AIWORLD-LEARNER-2026,ENTERPRISE_LEADER:AIWORLD-ENTERPRISE-2026",
-        "SEED_INCLUDE_DEMO_DATA": "false",
+    frontend_production = {
+        "VITE_API_BASE_URL": pick_env_value(
+            "VITE_API_BASE_URL",
+            app_env,
+            existing_frontend_production_env,
+            default="",
+        ),
+        "VITE_ENABLE_DEMO_MODE": "false",
+        "VITE_ALLOW_DEMO_PREFILL": "false",
+        "VITE_ENABLE_PUBLIC_SAMPLE_INVITES": "false",
+        "VITE_ENABLE_ASSISTANT": pick_env_value(
+            "VITE_ENABLE_ASSISTANT",
+            app_env,
+            default=enable_assistant,
+        ),
+        "VITE_ENABLE_KNOWLEDGE_BASE": pick_env_value(
+            "VITE_ENABLE_KNOWLEDGE_BASE",
+            app_env,
+            default=enable_knowledge_base,
+        ),
     }
 
-    (ROOT / ".env.production").write_text(serialize_env(production), encoding="utf-8")
-    (ROOT / ".env.staging").write_text(serialize_env(staging), encoding="utf-8")
+    (ROOT / ".env.production").write_text(
+        serialize_env(production), encoding="utf-8"
+    )
+    (PROJECT_ROOT / ".env.production").write_text(
+        serialize_env(frontend_production), encoding="utf-8"
+    )
 
 
 if __name__ == "__main__":

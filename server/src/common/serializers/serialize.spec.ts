@@ -36,8 +36,10 @@ describe("serialize helpers", () => {
     });
 
     expect(result.status).toBe("PENDING_REVIEW");
+    expect(result.contentDomain).toBe("ENTERPRISE_NEED");
     expect(result.visibility).toBe("EXPERTS_LEARNERS");
     expect(result.tags).toEqual(["EXPERT"]);
+    expect(result.background).toBe("Need delivery support");
   });
 
   it("serializes invite, kb file, and application enums without compatibility fallbacks", () => {

@@ -1,4 +1,5 @@
 import { useDeferredValue, useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { formatDistanceToNow } from "date-fns";
 import {
   Calendar,
@@ -35,6 +36,10 @@ import {
   updateAdminHubItemByApi,
 } from "../../lib/api";
 import { usePageTitle } from "../../lib/usePageTitle";
+import {
+  getContentDomainMeta,
+  getContentPreviewSections,
+} from "../../lib/contentDomain";
 import { formatStatus } from "../../lib/utils";
 import type {
   AdminHubItem,
@@ -79,8 +84,10 @@ function getStatsKey(status: ContentStatus): keyof AdminHubStats {
 }
 
 export function AdminHub() {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   usePageTitle(t("admin_hub.content_management"));
+  const usersLabel = language === "zh" ? "用户总览" : "User Directory";
+  const reviewLabel = language === "zh" ? "审核台" : "Review";
 
   const [contents, setContents] = useState<AdminHubItem[]>([]);
   const [stats, setStats] = useState<AdminHubStats>(EMPTY_STATS);
@@ -300,6 +307,16 @@ export function AdminHub() {
               {t("admin_hub.refreshing")}
             </Badge>
           ) : null}
+          <Link to="/admin/review">
+            <Button variant="outline" size="sm">
+              {reviewLabel}
+            </Button>
+          </Link>
+          <Link to="/admin/users">
+            <Button variant="outline" size="sm">
+              {usersLabel}
+            </Button>
+          </Link>
         </div>
       </PageHeader>
 
@@ -465,7 +482,12 @@ export function AdminHub() {
         />
       ) : viewMode === "list" ? (
         <div className="space-y-3">
-          {contents.map((content) => (
+          {contents.map((content) => {
+            const domainMeta = getContentDomainMeta(content.contentDomain, t);
+            const DomainIcon = domainMeta.Icon;
+            const previewSections = getContentPreviewSections(content, t);
+
+            return (
             <Card key={content.id} className="glass-panel">
               <CardContent className="flex items-center gap-4 p-4">
                 <label className="self-start pt-1">
@@ -492,6 +514,14 @@ export function AdminHub() {
                       {content.type}
                     </Badge>
                     <StatusBadge status={content.status} />
+                    <Badge
+                      variant="outline"
+                      className={`gap-1 text-[10px] border ${domainMeta.className}`}
+                      data-testid={`admin-hub-domain-${content.id}`}
+                    >
+                      <DomainIcon className="h-3 w-3" />
+                      {domainMeta.label}
+                    </Badge>
                     {content.rejectReason ? (
                       <span className="text-[10px] italic text-red-400">
                         {t("admin_hub.reason_label")} {content.rejectReason}
@@ -539,6 +569,23 @@ export function AdminHub() {
                       <p className="truncate font-medium text-zinc-100">
                         {content.title}
                       </p>
+                      {previewSections.length > 0 ? (
+                        <div className="mt-2 space-y-1">
+                          {previewSections.slice(0, 2).map((section) => (
+                            <div key={section.key}>
+                              <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                                {section.label}
+                              </p>
+                              <p
+                                className="line-clamp-2 text-xs text-zinc-400"
+                                data-testid={`admin-hub-preview-${content.id}-${section.key}`}
+                              >
+                                {section.value}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                       <div className="mt-1 flex items-center gap-4 text-xs text-zinc-500">
                         <span className="flex items-center gap-1">
                           <User className="h-3 w-3" />
@@ -656,11 +703,17 @@ export function AdminHub() {
                 </div>
               </CardContent>
             </Card>
-          ))}
+            );
+          })}
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {contents.map((content) => (
+            (() => {
+              const domainMeta = getContentDomainMeta(content.contentDomain, t);
+              const DomainIcon = domainMeta.Icon;
+              const previewSections = getContentPreviewSections(content, t);
+              return (
             <Card key={content.id} className="glass-panel">
               {content.coverImage ? (
                 <div className="aspect-video w-full overflow-hidden bg-zinc-800">
@@ -687,9 +740,36 @@ export function AdminHub() {
                     data-testid={`admin-hub-select-${content.id}`}
                   />
                 </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge
+                    variant="outline"
+                    className={`gap-1 text-[10px] border ${domainMeta.className}`}
+                    data-testid={`admin-hub-domain-${content.id}`}
+                  >
+                    <DomainIcon className="h-3 w-3" />
+                    {domainMeta.label}
+                  </Badge>
+                </div>
                 <p className="line-clamp-2 font-medium text-zinc-100">
                   {content.title}
                 </p>
+                {previewSections.length > 0 ? (
+                  <div className="space-y-1">
+                    {previewSections.slice(0, 2).map((section) => (
+                      <div key={section.key}>
+                        <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                          {section.label}
+                        </p>
+                        <p
+                          className="text-xs text-zinc-400 line-clamp-2"
+                          data-testid={`admin-hub-preview-${content.id}-${section.key}`}
+                        >
+                          {section.value}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
                 <p className="text-xs text-zinc-500">
                   {t("admin_hub.by")} {content.author?.name || t("hub.unknown")}
                 </p>
@@ -758,6 +838,8 @@ export function AdminHub() {
                 ) : null}
               </CardContent>
             </Card>
+              );
+            })()
           ))}
         </div>
       )}

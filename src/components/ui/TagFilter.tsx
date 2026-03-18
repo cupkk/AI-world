@@ -8,9 +8,16 @@ interface TagFilterProps {
   selectedTags: string[];
   onChange: (tags: string[]) => void;
   className?: string;
+  getLabel?: (tag: string) => string;
 }
 
-export function TagFilter({ tags, selectedTags, onChange, className }: TagFilterProps) {
+export function TagFilter({
+  tags,
+  selectedTags,
+  onChange,
+  className,
+  getLabel,
+}: TagFilterProps) {
   const { t } = useTranslation();
   const toggleTag = (tag: string) => {
     if (selectedTags.includes(tag)) {
@@ -44,7 +51,7 @@ export function TagFilter({ tags, selectedTags, onChange, className }: TagFilter
                 : "border-white/10 bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200"
             )}
           >
-            {tag}
+            {getLabel ? getLabel(tag) : tag}
           </button>
         );
       })}

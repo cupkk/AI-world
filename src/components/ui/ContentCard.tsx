@@ -4,6 +4,11 @@ import { Badge } from "./Badge";
 import { formatDistanceToNow } from "date-fns";
 import type { Content, User } from "../../types";
 import { useTranslation } from "../../hooks/useTranslation";
+import {
+  getContentDetailHref,
+  getContentDomainMeta,
+  getContentPreviewSections,
+} from "../../lib/contentDomain";
 
 interface ContentCardProps {
   content: Content;
@@ -12,8 +17,12 @@ interface ContentCardProps {
 
 export function ContentCard({ content, author }: ContentCardProps) {
   const { t } = useTranslation();
+  const domainMeta = getContentDomainMeta(content.contentDomain, t);
+  const DomainIcon = domainMeta.Icon;
+  const previewSections = getContentPreviewSections(content, t);
+
   return (
-    <Link to={`/hub/${content.type.toLowerCase()}/${content.id}`}>
+    <Link to={getContentDetailHref(content)}>
       <Card className="flex flex-col overflow-hidden transition-all hover:shadow-[0_0_20px_rgba(79,70,229,0.15)] hover:border-indigo-500/30 group glass-panel h-full">
         {content.coverImage && (
           <div className="aspect-video w-full overflow-hidden bg-zinc-800">
@@ -25,13 +34,23 @@ export function ContentCard({ content, author }: ContentCardProps) {
           </div>
         )}
         <CardHeader>
-          <div className="mb-2 flex items-center justify-between">
-            <Badge
-              variant="secondary"
-              className="text-[10px] uppercase tracking-wider"
-            >
-              {content.type}
-            </Badge>
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge
+                variant="secondary"
+                className="text-[10px] uppercase tracking-wider"
+              >
+                {content.type}
+              </Badge>
+              <Badge
+                variant="outline"
+                className={`gap-1 text-[10px] border ${domainMeta.className}`}
+                data-testid={`hub-card-domain-${content.id}`}
+              >
+                <DomainIcon className="h-3 w-3" />
+                {domainMeta.label}
+              </Badge>
+            </div>
             <span className="text-xs text-zinc-500">
               {formatDistanceToNow(new Date(content.createdAt), {
                 addSuffix: true,
@@ -41,9 +60,23 @@ export function ContentCard({ content, author }: ContentCardProps) {
           <CardTitle className="line-clamp-2 text-lg text-zinc-100 group-hover:text-indigo-400 transition-colors">
             {content.title}
           </CardTitle>
-          <CardDescription className="line-clamp-2 text-zinc-400">
-            {content.description}
-          </CardDescription>
+          {previewSections.length > 0 ? (
+            <div className="space-y-2">
+              {previewSections.slice(0, 2).map((section) => (
+                <div key={section.key}>
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                    {section.label}
+                  </p>
+                  <CardDescription
+                    className="line-clamp-2 text-zinc-400"
+                    data-testid={`hub-card-preview-${content.id}-${section.key}`}
+                  >
+                    {section.value}
+                  </CardDescription>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </CardHeader>
         <CardContent className="mt-auto">
           <div className="mb-4 flex flex-wrap gap-2">

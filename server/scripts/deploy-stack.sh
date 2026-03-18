@@ -1,24 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-stack="${1:?Usage: deploy-stack.sh <production|staging>}"
-
-case "${stack}" in
-  production)
-    project_name="aiworld-production"
-    compose_file="docker-compose.prod.yml"
-    stack_env_file=".env.production"
-    ;;
-  staging)
-    project_name="aiworld-staging"
-    compose_file="docker-compose.staging.yml"
-    stack_env_file=".env.staging"
-    ;;
-  *)
-    echo "Unsupported stack: ${stack}" >&2
-    exit 1
-    ;;
-esac
+project_name="aiworld-production"
+compose_file="docker-compose.prod.yml"
+stack_env_file=".env.production"
 
 : "${REGISTRY:?Missing REGISTRY}"
 : "${IMAGE_TAG:?Missing IMAGE_TAG}"
@@ -65,5 +50,5 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 
-echo "Stack ${stack} did not become ready in time." >&2
+echo "Production stack did not become ready in time." >&2
 exit 1

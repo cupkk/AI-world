@@ -143,7 +143,7 @@ export function ProfileEdit() {
         title={t("settings.profile_title")}
         description={t("settings.profile_desc")}
       >
-        <Button onClick={handleSave} disabled={saving} className="gap-2">
+        <Button onClick={handleSave} disabled={saving} className="gap-2" data-testid="profile-save-top-btn">
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
           {t("settings.save")}
         </Button>
@@ -199,6 +199,7 @@ export function ProfileEdit() {
                 value={name}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setName(e.target.value)}
                 placeholder={t("settings.full_name")}
+                data-testid="profile-name-input"
               />
             </div>
             <div>
@@ -209,6 +210,7 @@ export function ProfileEdit() {
                 value={title}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)}
                 placeholder={t("settings.job_title_pl")}
+                data-testid="profile-title-input"
               />
             </div>
             <div>
@@ -219,6 +221,7 @@ export function ProfileEdit() {
                 value={company}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setCompany(e.target.value)}
                 placeholder={t("settings.company_pl")}
+                data-testid="profile-company-input"
               />
             </div>
             <div>
@@ -229,6 +232,7 @@ export function ProfileEdit() {
                 value={location}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setLocation(e.target.value)}
                 placeholder={t("settings.location_pl")}
+                data-testid="profile-location-input"
               />
             </div>
           </div>
@@ -242,6 +246,7 @@ export function ProfileEdit() {
               rows={3}
               className={textareaClasses}
               placeholder={t("settings.bio_pl")}
+              data-testid="profile-bio-input"
             />
           </div>
           <div>
@@ -276,6 +281,7 @@ export function ProfileEdit() {
             value={contactEmail}
             onChange={(e: React.ChangeEvent<HTMLInputElement>) => setContactEmail(e.target.value)}
             placeholder={t("settings.contact_email_pl")}
+            data-testid="profile-contact-email-input"
           />
           <div>
             <label className="text-sm font-medium text-zinc-300 mb-1.5 block">
@@ -466,6 +472,7 @@ export function ProfileEdit() {
               rows={2}
               className={textareaClasses}
               placeholder={t("onb.what_im_doing_placeholder")}
+              data-testid="profile-what-im-doing-input"
             />
           </div>
           <div>
@@ -478,6 +485,7 @@ export function ProfileEdit() {
               rows={2}
               className={textareaClasses}
               placeholder={t("onb.what_i_can_provide_placeholder")}
+              data-testid="profile-what-i-can-provide-input"
             />
           </div>
           <div>
@@ -490,6 +498,7 @@ export function ProfileEdit() {
               rows={2}
               className={textareaClasses}
               placeholder={t("onb.what_im_looking_for_placeholder")}
+              data-testid="profile-what-im-looking-for-input"
             />
           </div>
           {user.role === "ENTERPRISE_LEADER" && (
@@ -514,7 +523,7 @@ export function ProfileEdit() {
 
       {/* Save Button at Bottom */}
       <div className="flex justify-end pb-8">
-        <Button onClick={handleSave} disabled={saving} className="gap-2">
+        <Button onClick={handleSave} disabled={saving} className="gap-2" data-testid="profile-save-bottom-btn">
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
           {t("settings.save")}
         </Button>

@@ -28,9 +28,17 @@ import {
   ExternalLink,
   Trophy,
   Send,
+  Handshake,
 } from "lucide-react";
 import { usePageTitle } from "../lib/usePageTitle";
+import { featureFlags } from "../lib/features";
 import { toast } from "sonner";
+import {
+  getApplicationTargetTypeForContent,
+  getContentDetailHref,
+  getContentDomainMeta,
+  getContentPreviewSections,
+} from "../lib/contentDomain";
 import {
   fetchLearnerDashboardByApi,
   submitApplicationByApi,
@@ -56,11 +64,16 @@ const EMPTY_DASHBOARD: LearnerDashboardData = {
   applications: [],
 };
 
-function mapLearningResource(content: Content): LearningResource {
+function mapLearningResource(
+  content: Content,
+  t: (key: string) => string,
+): LearningResource {
+  const preview = getContentPreviewSections(content, t)[0]?.value ?? "";
+
   return {
     id: content.id,
     title: content.title,
-    description: content.description?.slice(0, 120) || "",
+    description: preview.slice(0, 120),
     url: `/hub/${content.type.toLowerCase()}/${content.id}`,
     type:
       content.type === "PAPER"
@@ -85,12 +98,22 @@ export function DashboardLearner() {
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
 
-  const learningResources = dashboard.learningResources.map(mapLearningResource);
+  const learningResources = dashboard.learningResources.map((content) =>
+    mapLearningResource(content, t),
+  );
   const myApplications = dashboard.applications.filter(
     (item) => item.applicantId === user?.id,
   );
+  const getActiveApplication = (contentId: string) =>
+    myApplications.find(
+      (item) => item.targetId === contentId && item.status !== "REJECTED",
+    );
+  const getRejectedApplication = (contentId: string) =>
+    myApplications.find(
+      (item) => item.targetId === contentId && item.status === "REJECTED",
+    );
   const alreadyApplied = (contentId: string) =>
-    myApplications.some((item) => item.targetId === contentId);
+    Boolean(getActiveApplication(contentId));
 
   const loadData = async () => {
     if (!user) return;
@@ -117,23 +140,26 @@ export function DashboardLearner() {
   if (isLoading) return <LoadingSkeleton />;
 
   const handleApply = async (contentId: string) => {
+    const matchedContent =
+      dashboard.projectOpportunities.find((item) => item.id === contentId) ??
+      dashboard.recommendedContents.find((item) => item.id === contentId) ??
+      dashboard.learningResources.find((item) => item.id === contentId);
+
     try {
       const app = await submitApplicationByApi({
-        targetType: "PROJECT",
+        targetType: getApplicationTargetTypeForContent(
+          matchedContent ?? { contentDomain: "HUB_ITEM" },
+        ),
         targetId: contentId,
         message: applyMessage || undefined,
       });
-
-      const matchedContent =
-        dashboard.projectOpportunities.find((item) => item.id === contentId) ??
-        dashboard.recommendedContents.find((item) => item.id === contentId) ??
-        dashboard.learningResources.find((item) => item.id === contentId);
       const nextApplication: ApplicationOutboxItem = {
         ...app,
         target: {
           id: contentId,
           targetType: app.targetType,
           contentType: matchedContent?.type ?? "PROJECT",
+          contentDomain: matchedContent?.contentDomain ?? "HUB_ITEM",
           title: matchedContent?.title ?? "",
           status: matchedContent?.status,
           ownerId: matchedContent?.authorId ?? "",
@@ -141,14 +167,30 @@ export function DashboardLearner() {
         targetContentTitle: matchedContent?.title ?? "",
       };
 
-      setDashboard((prev) => ({
-        ...prev,
-        applications: [...prev.applications, nextApplication],
-        stats: {
-          ...prev.stats,
-          applicationCount: prev.stats.applicationCount + 1,
-        },
-      }));
+      setDashboard((prev) => {
+        const existingIndex = prev.applications.findIndex(
+          (item) =>
+            item.id === nextApplication.id || item.targetId === contentId,
+        );
+        const applications =
+          existingIndex >= 0
+            ? prev.applications.map((item, index) =>
+                index === existingIndex ? nextApplication : item,
+              )
+            : [...prev.applications, nextApplication];
+
+        return {
+          ...prev,
+          applications,
+          stats: {
+            ...prev.stats,
+            applicationCount:
+              existingIndex >= 0
+                ? prev.stats.applicationCount
+                : prev.stats.applicationCount + 1,
+          },
+        };
+      });
       toast.success(t("dashboard.app_submitted_success"));
     } catch (err: any) {
       toast.error(err?.message || t("api.request_failed"));
@@ -171,16 +213,20 @@ export function DashboardLearner() {
             <Plus className="h-4 w-4" /> {t("dashboard.action_publish")}
           </Button>
         </Link>
-        <Link to="/assistant">
-          <Button variant="outline" className="gap-2 h-9">
-            <BrainCircuit className="h-4 w-4" /> {t("dashboard.action_assistant")}
-          </Button>
-        </Link>
-        <Link to="/settings/knowledge-base">
-          <Button variant="outline" className="gap-2 h-9">
-            <Upload className="h-4 w-4" /> {t("dashboard.action_upload")}
-          </Button>
-        </Link>
+        {featureFlags.assistant ? (
+          <Link to="/assistant">
+            <Button variant="outline" className="gap-2 h-9">
+              <BrainCircuit className="h-4 w-4" /> {t("dashboard.action_assistant")}
+            </Button>
+          </Link>
+        ) : null}
+        {featureFlags.knowledgeBase ? (
+          <Link to="/settings/knowledge-base">
+            <Button variant="outline" className="gap-2 h-9">
+              <Upload className="h-4 w-4" /> {t("dashboard.action_upload")}
+            </Button>
+          </Link>
+        ) : null}
         <Link to="/settings/profile">
           <Button variant="outline" className="gap-2 h-9">
             <Settings className="h-4 w-4" /> {t("dashboard.action_edit_profile")}
@@ -277,7 +323,9 @@ export function DashboardLearner() {
                     {resource.title}
                   </p>
                   <p className="text-xs text-zinc-400 mt-1 line-clamp-1">
+                    <span data-testid={`learner-learning-preview-${resource.id}`}>
                     {resource.description}
+                    </span>
                   </p>
                   <div className="mt-1.5 flex gap-2 items-center">
                     <Badge variant="secondary" className="text-[10px]">
@@ -315,7 +363,8 @@ export function DashboardLearner() {
 
         <Card className="glass-panel">
           <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle className="text-zinc-100 flex items-center gap-2">
+            <CardTitle className="project-opps-title-clean text-zinc-100 flex items-center gap-2">
+              <Briefcase className="h-5 w-5 text-indigo-400" />
               <span className="text-indigo-400">馃幆</span>{" "}
               {t("dashboard.project_opp")}
             </CardTitle>
@@ -332,15 +381,46 @@ export function DashboardLearner() {
                   key={content.id}
                   className="border-b border-white/10 pb-4 last:border-0 last:pb-0"
                 >
+                  {(() => {
+                    const hasActiveApplication = alreadyApplied(content.id);
+                    const rejectedApplication = getRejectedApplication(content.id);
+                    const domainMeta = getContentDomainMeta(
+                      content.contentDomain,
+                      t,
+                    );
+                    const DomainIcon = domainMeta.Icon;
+                    const previewSections = getContentPreviewSections(content, t);
+
+                    return (
                   <div className="flex items-center justify-between hover:bg-zinc-800/30 -mx-2 px-2 py-1 rounded-lg transition-colors">
                     <Link
-                      to={`/hub/${content.type.toLowerCase()}/${content.id}`}
+                      to={getContentDetailHref(content)}
                       className="flex-1 min-w-0"
                     >
                       <p className="font-medium text-zinc-100">{content.title}</p>
-                      <p className="text-xs text-zinc-400 mt-1">
-                        {content.description.slice(0, 60)}...
-                      </p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <Badge
+                          variant="outline"
+                          className={`gap-1 text-[10px] border ${domainMeta.className}`}
+                          data-testid={`learner-opportunity-domain-${content.id}`}
+                        >
+                          <DomainIcon className="h-3 w-3" />
+                          {domainMeta.label}
+                        </Badge>
+                        {previewSections.length > 0 ? (
+                          <div className="min-w-0">
+                            <p className="text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+                              {previewSections[0].label}
+                            </p>
+                            <p
+                              className="text-xs text-zinc-400 line-clamp-1"
+                              data-testid={`learner-opportunity-preview-${content.id}-${previewSections[0].key}`}
+                            >
+                              {previewSections[0].value}
+                            </p>
+                          </div>
+                        ) : null}
+                      </div>
                     </Link>
                     <div className="flex items-center gap-2 shrink-0 ml-2">
                       <Badge
@@ -351,7 +431,7 @@ export function DashboardLearner() {
                           ? t("hub.type.project")
                           : content.type}
                       </Badge>
-                      {alreadyApplied(content.id) ? (
+                      {hasActiveApplication ? (
                         <Badge
                           variant="outline"
                           className="text-[10px] border-emerald-500/30 text-emerald-400"
@@ -359,20 +439,32 @@ export function DashboardLearner() {
                           {t("hub.applied")}
                         </Badge>
                       ) : (
-                        <Button
-                          size="sm"
-                          className="h-7 text-xs gap-1 bg-indigo-600 hover:bg-indigo-500 text-white"
-                          onClick={(event) => {
-                            event.preventDefault();
-                            setApplyingTo(content.id);
-                          }}
-                          data-testid={`learner-apply-${content.id}`}
-                        >
-                          <Send className="h-3 w-3" /> {t("hub.apply")}
-                        </Button>
+                        <>
+                          {rejectedApplication ? (
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] border-red-500/30 text-red-400"
+                            >
+                              {t("content.status.rejected")}
+                            </Badge>
+                          ) : null}
+                          <Button
+                            size="sm"
+                            className="h-7 text-xs gap-1 bg-indigo-600 hover:bg-indigo-500 text-white"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              setApplyingTo(content.id);
+                            }}
+                            data-testid={`learner-apply-${content.id}`}
+                          >
+                            <Send className="h-3 w-3" /> {t("hub.apply")}
+                          </Button>
+                        </>
                       )}
                     </div>
                   </div>
+                    );
+                  })()}
                   {applyingTo === content.id ? (
                     <div className="mt-3 ml-2 p-3 rounded-lg border border-indigo-500/20 bg-indigo-500/5 space-y-3">
                       <p className="text-xs text-zinc-300">
@@ -431,37 +523,163 @@ export function DashboardLearner() {
           </CardHeader>
           <CardContent className="space-y-4">
             {dashboard.recommendedContents.length > 0 ? (
-              dashboard.recommendedContents.map((content) => (
-                <Link
-                  key={content.id}
-                  to={`/hub/${content.type.toLowerCase()}/${content.id}`}
-                  className="flex items-center justify-between border-b border-white/10 pb-4 last:border-0 last:pb-0 hover:bg-zinc-800/30 -mx-2 px-2 py-1 rounded-lg transition-colors"
-                >
-                  <div>
-                    <p className="font-medium text-zinc-100">{content.title}</p>
-                    <div className="mt-1 flex gap-2">
-                      {content.tags.slice(0, 2).map((tag) => (
-                        <Badge
-                          key={tag}
-                          variant="secondary"
-                          className="text-[10px]"
-                        >
-                          {tag}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className="border-indigo-500/30 text-indigo-400 bg-indigo-500/10"
+              dashboard.recommendedContents.map((content) => {
+                const domainMeta = getContentDomainMeta(content.contentDomain, t);
+                const DomainIcon = domainMeta.Icon;
+                const previewSections = getContentPreviewSections(content, t);
+                return (
+                  <Link
+                    key={content.id}
+                    to={getContentDetailHref(content)}
+                    className="flex items-center justify-between border-b border-white/10 pb-4 last:border-0 last:pb-0 hover:bg-zinc-800/30 -mx-2 px-2 py-1 rounded-lg transition-colors"
                   >
-                    {t("hub.status.read")}
-                  </Badge>
-                </Link>
-              ))
+                    <div>
+                      <p className="font-medium text-zinc-100">{content.title}</p>
+                      {previewSections.length > 0 ? (
+                        <div className="mt-1">
+                          <p className="text-[10px] uppercase tracking-[0.14em] text-zinc-500">
+                            {previewSections[0].label}
+                          </p>
+                          <p
+                            className="text-xs text-zinc-400 line-clamp-1"
+                            data-testid={`learner-recommended-preview-${content.id}-${previewSections[0].key}`}
+                          >
+                            {previewSections[0].value}
+                          </p>
+                        </div>
+                      ) : null}
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        <Badge
+                          variant="outline"
+                          className={`gap-1 text-[10px] border ${domainMeta.className}`}
+                          data-testid={`learner-recommended-domain-${content.id}`}
+                        >
+                          <DomainIcon className="h-3 w-3" />
+                          {domainMeta.label}
+                        </Badge>
+                        {content.tags.slice(0, 2).map((tag) => (
+                          <Badge
+                            key={tag}
+                            variant="secondary"
+                            className="text-[10px]"
+                          >
+                            {tag}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                    <Badge
+                      variant="outline"
+                      className="border-indigo-500/30 text-indigo-400 bg-indigo-500/10"
+                    >
+                      {t("hub.status.read")}
+                    </Badge>
+                  </Link>
+                );
+              })
             ) : (
               <p className="text-sm text-zinc-500 text-center py-4">
                 {t("dashboard.no_content")}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="glass-panel">
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="text-zinc-100 flex items-center gap-2">
+              <Handshake className="h-5 w-5 text-indigo-400" />
+              {t("dashboard.my_applications")}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {myApplications.length > 0 ? (
+              myApplications.map((application) => {
+                const domainMeta = getContentDomainMeta(
+                  application.target.contentDomain,
+                  t,
+                );
+                const DomainIcon = domainMeta.Icon;
+                const targetStatus = application.target.status;
+                const ownerSuspended = application.owner?.status === "suspended";
+                return (
+                  <div
+                    key={application.id}
+                    className="border-b border-white/10 pb-3 last:border-0 last:pb-0"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-xs text-zinc-500">
+                            {t("dashboard.applied_to")}
+                          </span>
+                          <Link
+                            to={getContentDetailHref({
+                              id: application.target.id,
+                              type: application.target.contentType,
+                            })}
+                            className="truncate font-medium text-indigo-400 hover:text-indigo-300 hover:underline"
+                            data-testid={`learner-application-target-${application.id}`}
+                          >
+                            {application.targetContentTitle || application.target.title}
+                          </Link>
+                          <Badge
+                            variant="outline"
+                            className={`gap-1 text-[10px] border ${domainMeta.className}`}
+                            data-testid={`learner-application-domain-${application.id}`}
+                          >
+                            <DomainIcon className="h-3 w-3" />
+                            {domainMeta.label}
+                          </Badge>
+                          {targetStatus ? (
+                            <span
+                              data-testid={`learner-application-target-status-${application.id}`}
+                            >
+                              <StatusBadge
+                                status={targetStatus}
+                                className="text-[10px]"
+                              />
+                            </span>
+                          ) : null}
+                          {ownerSuspended ? (
+                            <Badge
+                              variant="outline"
+                              className="border-red-500/30 text-[10px] text-red-300"
+                              data-testid={`learner-application-owner-status-${application.id}`}
+                            >
+                              {t("admin_review.audit_flag_owner_suspended")}
+                            </Badge>
+                          ) : null}
+                        </div>
+                        {application.message ? (
+                          <p className="mt-1 text-xs text-zinc-400 line-clamp-2">
+                            {application.message}
+                          </p>
+                        ) : null}
+                        <p className="mt-1 text-xs text-zinc-500">
+                          {new Date(application.createdAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <span
+                        data-testid={`learner-application-status-${application.id}`}
+                      >
+                        <StatusBadge
+                          status={
+                            application.status === "SUBMITTED"
+                              ? "PENDING_REVIEW"
+                              : application.status === "ACCEPTED"
+                                ? "PUBLISHED"
+                                : "REJECTED"
+                          }
+                        />
+                      </span>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <p className="text-sm text-zinc-500 text-center py-4">
+                {t("dashboard.no_applications_sent")}
               </p>
             )}
           </CardContent>
@@ -476,21 +694,53 @@ export function DashboardLearner() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {dashboard.myContents.map((content) => (
-                <Link
-                  key={content.id}
-                  to={`/publish/${content.id}`}
-                  className="flex items-center justify-between border-b border-white/10 pb-3 last:border-0 last:pb-0 hover:bg-zinc-800/30 -mx-2 px-2 py-1 rounded-lg transition-colors"
-                >
-                  <div>
-                    <p className="font-medium text-zinc-100">{content.title}</p>
-                    <p className="text-xs text-zinc-500">
-                      {new Date(content.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <StatusBadge status={content.status} />
-                </Link>
-              ))}
+              {dashboard.myContents.map((content) => {
+                const domainMeta = getContentDomainMeta(content.contentDomain, t);
+                const DomainIcon = domainMeta.Icon;
+                const previewSections = getContentPreviewSections(content, t);
+                return (
+                  <Link
+                    key={content.id}
+                    to={`/publish/${content.id}`}
+                    className="flex items-center justify-between border-b border-white/10 pb-3 last:border-0 last:pb-0 hover:bg-zinc-800/30 -mx-2 px-2 py-1 rounded-lg transition-colors"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-zinc-100">{content.title}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2">
+                        <Badge
+                          variant="outline"
+                          className={`gap-1 text-[10px] border ${domainMeta.className}`}
+                          data-testid={`learner-content-domain-${content.id}`}
+                        >
+                          <DomainIcon className="h-3 w-3" />
+                          {domainMeta.label}
+                        </Badge>
+                        <p className="text-xs text-zinc-500">
+                          {new Date(content.createdAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      {previewSections.length > 0 ? (
+                        <div className="mt-2 space-y-1">
+                          {previewSections.slice(0, 2).map((section) => (
+                            <div key={section.key}>
+                              <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                                {section.label}
+                              </p>
+                              <p
+                                className="text-xs text-zinc-400 line-clamp-1"
+                                data-testid={`learner-content-preview-${content.id}-${section.key}`}
+                              >
+                                {section.value}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                    <StatusBadge status={content.status} />
+                  </Link>
+                );
+              })}
             </CardContent>
           </Card>
         ) : null}

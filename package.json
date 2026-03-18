@@ -9,12 +9,12 @@
     "preview": "vite preview",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "lint": "tsc --noEmit",
+    "release:preflight": "node ./scripts/release-preflight.mjs --mode production",
+    "release:preflight:production": "node ./scripts/release-preflight.mjs --mode production",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:ui": "playwright test --ui",
-    "test:live:prod-smoke": "playwright test -c playwright.live.config.ts tests/live/prod-smoke.spec.ts",
-    "test:live:staging-smoke": "playwright test -c playwright.live.config.ts tests/live/prod-smoke.spec.ts",
-    "test:live:staging-mutation": "playwright test -c playwright.live.config.ts tests/live/staging-mutation.spec.ts"
+    "test:live:prod-smoke": "playwright test -c playwright.live.config.ts tests/live/prod-smoke.spec.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",

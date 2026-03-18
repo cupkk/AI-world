@@ -4,20 +4,27 @@
 };
 
 import type {
+  AdminAuditLogApplication,
+  AdminAuditLogItem,
+  AdminAuditLogTarget,
   AdminDashboardData,
   AdminHubBatchResult,
   AdminHubData,
   AdminHubMutationResult,
   AdminReport,
+  AdminUsersData,
   Application,
+  ApplicationAuditGovernanceAction,
   ApplicationAuditItem,
   ApplicationInboxItem,
   ApplicationStatus,
   ApplicationOutboxItem,
   ApplicationTargetSummary,
+  AssistantKnowledgeSource,
   ApplicationTargetType,
   ChatThread,
   Content,
+  ContentDetailSection,
   EnterpriseDashboardData,
   ExpertDashboardData,
   HubDetailData,
@@ -31,10 +38,13 @@ import type {
   Role,
   ThreadStatus,
   User,
+  UserAccountStatus,
 } from "../types";
 import {
   normalizeApplicationStatusValue,
   normalizeApplicationTargetTypeValue,
+  normalizeContentDomainValue,
+  normalizeContentDetailSectionKindValue,
   normalizeContentStatusValue,
   normalizeContentTypeValue,
   normalizeContentVisibilityValue,
@@ -63,6 +73,8 @@ export type AssistantRecommendResult = {
   reply?: string;
   recommendedUserId?: string;
   recommendedContentId?: string;
+  knowledgeSources?: AssistantKnowledgeSource[];
+  knowledgeBaseReadyCount?: number;
 };
 
 export type KnowledgeBaseUploadResult = {
@@ -182,12 +194,19 @@ function normalizeUser(raw: any): User {
   const rawEmailVisibility =
     raw?.privacySettings?.emailVisibility ??
     raw?.emailVisibility;
+  const rawStatus =
+    raw?.status === "active" ||
+    raw?.status === "pending_identity_review" ||
+    raw?.status === "suspended"
+      ? raw.status
+      : undefined;
 
   return {
     id: String(raw?.id ?? ""),
     name: String(raw?.name ?? ""),
     email: String(raw?.email ?? ""),
     role: normalizeRole(raw?.role),
+    status: rawStatus,
     avatar: String(raw?.avatar ?? raw?.avatarUrl ?? ""),
     bio: typeof raw?.bio === "string" ? raw.bio : undefined,
     skills: Array.isArray(raw?.skills) ? raw.skills.filter((item: unknown) => typeof item === "string") : undefined,
@@ -227,12 +246,17 @@ function normalizeContent(raw: any): Content {
     title: String(raw?.title ?? ""),
     description: String(raw?.description ?? ""),
     type: normalizeContentTypeValue(raw?.type),
+    contentDomain: normalizeContentDomainValue(raw?.contentDomain),
     status: normalizeContentStatusValue(raw?.status),
     authorId: String(raw?.authorId ?? ""),
     createdAt: String(raw?.createdAt ?? new Date().toISOString()),
     tags: Array.isArray(raw?.tags) ? raw.tags.filter((item: unknown) => typeof item === "string") : [],
     likes: Number(raw?.likes ?? 0),
     views: Number(raw?.views ?? 0),
+    background: typeof raw?.background === "string" ? raw.background : undefined,
+    goal: typeof raw?.goal === "string" ? raw.goal : undefined,
+    deliverables: typeof raw?.deliverables === "string" ? raw.deliverables : undefined,
+    neededSupport: typeof raw?.neededSupport === "string" ? raw.neededSupport : undefined,
     coverImage: typeof raw?.coverImage === "string" ? raw.coverImage : undefined,
     visibility:
       raw?.visibility === undefined
@@ -285,14 +309,22 @@ export async function fetchHubContents(query?: HubQuery): Promise<Content[]> {
 export type TalentQuery = {
   q?: string;
   tags?: string[];
+  location?: string;
+  org?: string;
+  intents?: string[];
   role?: Role | "ALL";
+  sort?: "relevance" | "newest" | "profile_strength" | "name";
 };
 
 export async function fetchTalentUsers(query?: TalentQuery): Promise<User[]> {
   const params = toQueryString({
     q: query?.q,
     tags: query?.tags?.join(","),
+    location: query?.location,
+    org: query?.org,
+    intents: query?.intents?.join(","),
     role: query?.role && query.role !== "ALL" ? query.role : undefined,
+    sort: query?.sort,
   });
 
   const response = await apiFetch(getApiPath(`/api/talent${params}`));
@@ -317,15 +349,26 @@ export type PublishDraftPayload = {
   type: Content["type"];
   tags: string[];
   visibility?: Content["visibility"];
+  background?: string;
+  goal?: string;
+  deliverables?: string;
+  neededSupport?: string;
 };
 
 export async function createPublishDraftByApi(payload: PublishDraftPayload): Promise<Content> {
+  const dto = {
+    ...payload,
+    visibility:
+      payload.visibility === undefined
+        ? undefined
+        : toBackendContentVisibilityValue(payload.visibility),
+  };
   const response = await apiFetch(getApiPath("/api/publish"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(dto),
   });
 
   if (!response.ok) {
@@ -357,12 +400,41 @@ export async function submitPublishByApi(contentId: string): Promise<Content | n
 
 export async function updatePublishContentByApi(
   contentId: string,
-  updates: Partial<Pick<Content, "title" | "description" | "tags" | "type">>,
+  updates: Partial<
+    Pick<
+      Content,
+      | "title"
+      | "description"
+      | "tags"
+      | "type"
+      | "background"
+      | "goal"
+      | "deliverables"
+      | "neededSupport"
+      | "visibility"
+    >
+  >,
 ): Promise<Content> {
-  const { description, type, ...rest } = updates;
+  const {
+    description,
+    type,
+    background,
+    goal,
+    deliverables,
+    neededSupport,
+    visibility,
+    ...rest
+  } = updates;
   const payload: Record<string, unknown> = { ...rest };
   if (description !== undefined) payload.description = description;
   if (type !== undefined) payload.type = type.toLowerCase();
+  if (background !== undefined) payload.background = background;
+  if (goal !== undefined) payload.goal = goal;
+  if (deliverables !== undefined) payload.deliverables = deliverables;
+  if (neededSupport !== undefined) payload.neededSupport = neededSupport;
+  if (visibility !== undefined) {
+    payload.visibility = toBackendContentVisibilityValue(visibility);
+  }
   const response = await apiFetch(getApiPath(`/api/publish/${contentId}`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -406,6 +478,18 @@ export async function fetchMyPublishContentsByApi(): Promise<Content[]> {
   return list.map((item) => normalizeContent(item));
 }
 
+export async function fetchPublishContentByIdApi(contentId: string): Promise<Content> {
+  const response = await apiFetch(getApiPath(`/api/publish/${contentId}`));
+  if (!response.ok) {
+    throw new Error(`Fetch publish content failed: ${response.status}`);
+  }
+
+  const json = await response.json();
+  const body = unwrap(json as ApiEnvelope<Content | { item?: Content; content?: Content }>);
+  const content = (body as any)?.item ?? (body as any)?.content ?? body;
+  return normalizeContent(content);
+}
+
 export async function fetchAdminReviewQueueByApi(): Promise<Content[]> {
   const response = await apiFetch(getApiPath("/api/admin/review"));
   if (!response.ok) {
@@ -439,9 +523,28 @@ function normalizeAdminDashboard(raw: any): AdminDashboardData {
         ? item.reporterName
         : typeof item?.reporter?.name === "string"
           ? item.reporter.name
-          : "",
+        : "",
     createdAt: String(item?.createdAt ?? new Date().toISOString()),
     reporter: item?.reporter ? normalizeUser(item.reporter) : undefined,
+    targetUserId:
+      typeof item?.targetUserId === "string" ? item.targetUserId : undefined,
+    targetUserName:
+      typeof item?.targetUserName === "string"
+        ? item.targetUserName
+        : undefined,
+    targetConversationId:
+      typeof item?.targetConversationId === "string"
+        ? item.targetConversationId
+        : undefined,
+    targetMessagePreview:
+      typeof item?.targetMessagePreview === "string"
+        ? item.targetMessagePreview
+        : undefined,
+    targetParticipantNames: Array.isArray(item?.targetParticipantNames)
+      ? item.targetParticipantNames.filter(
+          (value: unknown): value is string => typeof value === "string",
+        )
+      : undefined,
   }));
 
   return {
@@ -462,6 +565,87 @@ export async function fetchAdminDashboardByApi(): Promise<AdminDashboardData> {
 
   const json = await response.json();
   return normalizeAdminDashboard(json);
+}
+
+function normalizeAdminAuditLogTarget(raw: any): AdminAuditLogTarget | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+
+  return {
+    id: typeof raw.id === "string" ? raw.id : undefined,
+    targetType: String(raw.targetType ?? "UNKNOWN"),
+    title: String(raw.title ?? ""),
+    status: typeof raw.status === "string" ? raw.status : undefined,
+    contentType: typeof raw.contentType === "string" ? raw.contentType : undefined,
+    contentDomain:
+      typeof raw.contentDomain === "string" ? raw.contentDomain : undefined,
+  };
+}
+
+function normalizeAdminAuditLogApplication(
+  raw: any,
+): AdminAuditLogApplication | undefined {
+  if (!raw || typeof raw !== "object") {
+    return undefined;
+  }
+
+  return {
+    id: String(raw.id ?? ""),
+    status: String(raw.status ?? ""),
+    applicant: raw.applicant ? normalizeUser(raw.applicant) : undefined,
+    owner: raw.owner ? normalizeUser(raw.owner) : undefined,
+    target: normalizeAdminAuditLogTarget(raw.target),
+  };
+}
+
+function normalizeAdminAuditLogItem(raw: any): AdminAuditLogItem {
+  return {
+    id: String(raw?.id ?? ""),
+    action: String(raw?.action ?? ""),
+    targetType: typeof raw?.targetType === "string" ? raw.targetType : undefined,
+    targetId: typeof raw?.targetId === "string" ? raw.targetId : undefined,
+    createdAt: String(raw?.createdAt ?? new Date().toISOString()),
+    actorId: String(raw?.actorId ?? ""),
+    actor: raw?.actor ? normalizeUser(raw.actor) : undefined,
+    reason: typeof raw?.reason === "string" ? raw.reason : undefined,
+    metadata:
+      raw?.metadata && typeof raw.metadata === "object" && !Array.isArray(raw.metadata)
+        ? (raw.metadata as Record<string, unknown>)
+        : undefined,
+    target: normalizeAdminAuditLogTarget(raw?.target),
+    application: normalizeAdminAuditLogApplication(raw?.application),
+  };
+}
+
+export type AdminAuditLogQuery = {
+  q?: string;
+  action?: string;
+  targetType?: string;
+  limit?: number;
+};
+
+export async function fetchAdminAuditLogsByApi(
+  query?: AdminAuditLogQuery,
+): Promise<AdminAuditLogItem[]> {
+  const params = toQueryString({
+    q: query?.q,
+    action: query?.action,
+    targetType: query?.targetType,
+    limit:
+      typeof query?.limit === "number" && Number.isFinite(query.limit)
+        ? String(query.limit)
+        : undefined,
+  });
+  const response = await apiFetch(getApiPath(`/api/admin/audit-logs${params}`));
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Fetch admin audit logs"));
+  }
+
+  const json = await response.json();
+  const body = unwrap(json as ApiEnvelope<any>);
+  const list = Array.isArray(body) ? body : asArray<any>((body as any)?.items);
+  return list.map(normalizeAdminAuditLogItem);
 }
 
 function normalizeAdminHubData(raw: any): AdminHubData {
@@ -898,12 +1082,29 @@ function normalizeHubDetail(raw: any): HubDetailData {
   const viewerApplication = body?.viewerApplication
     ? normalizeApplicationOutboxItem(body.viewerApplication)
     : null;
+  const detailSections = asArray<any>(body?.detailSections)
+    .map((section): ContentDetailSection | null => {
+      const content = typeof section?.content === "string" ? section.content.trim() : "";
+      if (!content) {
+        return null;
+      }
+      return {
+        kind: normalizeContentDetailSectionKindValue(section?.kind),
+        content,
+      };
+    })
+    .filter((section): section is ContentDetailSection => Boolean(section));
+  const applicationTargetType = body?.applicationTargetType
+    ? normalizeApplicationTargetTypeValue(body.applicationTargetType)
+    : null;
 
   return {
     content,
     author,
     relatedContents,
     viewerApplication,
+    detailSections,
+    applicationTargetType,
   };
 }
 
@@ -980,6 +1181,7 @@ function normalizeApplicationTarget(raw: any): ApplicationTargetSummary {
     id: String(raw?.id ?? ""),
     targetType: normalizeApplicationTargetTypeValue(raw?.targetType),
     contentType: normalizeContentTypeValue(raw?.contentType),
+    contentDomain: normalizeContentDomainValue(raw?.contentDomain),
     title: String(raw?.title ?? ""),
     status:
       raw?.status === undefined || raw?.status === null
@@ -1014,6 +1216,24 @@ function normalizeApplicationInboxItem(raw: any): ApplicationInboxItem {
 }
 
 function normalizeApplicationAuditItem(raw: any): ApplicationAuditItem {
+  const normalizeGovernanceAction = (input: any) =>
+    input && typeof input === "object"
+      ? {
+          action:
+            input.action === "REJECT_APPLICATION" ||
+            input.action === "REJECT_TARGET_CONTENT" ||
+            input.action === "SUSPEND_APPLICANT" ||
+            input.action === "SUSPEND_OWNER"
+              ? input.action
+              : "MARK_REVIEWED",
+          actorId: String(input.actorId ?? ""),
+          actorName:
+            typeof input.actorName === "string" ? input.actorName : undefined,
+          createdAt: String(input.createdAt ?? new Date().toISOString()),
+          reason: typeof input.reason === "string" ? input.reason : undefined,
+        }
+      : undefined;
+
   return {
     ...normalizeApplication(raw),
     applicant: normalizeUser(raw?.applicant ?? {}),
@@ -1023,8 +1243,27 @@ function normalizeApplicationAuditItem(raw: any): ApplicationAuditItem {
       typeof raw?.targetContentTitle === "string"
         ? raw.targetContentTitle
         : String(raw?.target?.title ?? ""),
-  };
-}
+    ageInDays:
+      typeof raw?.ageInDays === "number" && Number.isFinite(raw.ageInDays)
+        ? raw.ageInDays
+        : undefined,
+      auditFlags: Array.isArray(raw?.auditFlags)
+        ? raw.auditFlags
+            .filter((flag: unknown) => typeof flag === "string")
+            .map((flag: string) => flag.toUpperCase())
+        : [],
+      governanceState:
+        raw?.governanceState === "REVIEWED" ? "REVIEWED" : "OPEN",
+      latestGovernanceAction: normalizeGovernanceAction(
+        raw?.latestGovernanceAction,
+      ),
+      governanceTimeline: Array.isArray(raw?.governanceTimeline)
+        ? raw.governanceTimeline
+            .map((item: any) => normalizeGovernanceAction(item))
+            .filter(Boolean)
+        : [],
+    };
+  }
 
 export async function submitApplicationByApi(payload: SubmitApplicationPayload): Promise<Application> {
   const response = await apiFetch(getApiPath("/api/applications"), {
@@ -1076,6 +1315,30 @@ export async function fetchApplicationAuditByApi(): Promise<ApplicationAuditItem
   return list.map(normalizeApplicationAuditItem);
 }
 
+export async function applyApplicationAuditActionByApi(payload: {
+  ids: string[];
+  action: ApplicationAuditGovernanceAction;
+  reason?: string;
+}): Promise<{ updatedIds: string[] }> {
+  const response = await apiFetch(getApiPath("/api/applications/audit/actions"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Apply application audit action"));
+  }
+
+  const json = await response.json();
+  const body = unwrap(json as ApiEnvelope<any>);
+  return {
+    updatedIds: asArray<any>((body as any)?.updatedIds).map((item) =>
+      String(item),
+    ),
+  };
+}
+
 export async function fetchMyApplicationsByApi(): Promise<Application[]> {
   const response = await apiFetch(getApiPath("/api/applications/mine"));
   if (!response.ok) {
@@ -1124,6 +1387,15 @@ function normalizeProfilePage(raw: any): ProfilePageData {
       featuredTypes: asArray<any>(body?.summary?.featuredTypes).map((item) =>
         normalizeContentTypeValue(item),
       ),
+      domainCounts: {
+        hubItems: Number(body?.summary?.domainCounts?.hubItems ?? 0),
+        enterpriseNeeds: Number(
+          body?.summary?.domainCounts?.enterpriseNeeds ?? 0,
+        ),
+        researchProjects: Number(
+          body?.summary?.domainCounts?.researchProjects ?? 0,
+        ),
+      },
     },
   };
 }
@@ -1350,6 +1622,18 @@ export async function acceptMessageRequestByApi(requestId: string): Promise<stri
   return typeof (payload as any)?.conversationId === "string" ? (payload as any).conversationId : null;
 }
 
+export async function fetchBlockedUsersByApi(): Promise<User[]> {
+  const response = await apiFetch(getApiPath("/api/safety/blocks"));
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Fetch blocked users"));
+  }
+
+  const json = await response.json();
+  const body = unwrap(json as ApiEnvelope<User[] | { items?: User[] }>);
+  const list = Array.isArray(body) ? body : asArray<User>((body as any)?.items);
+  return list.map((item) => normalizeUser(item));
+}
+
 export async function rejectMessageRequestByApi(requestId: string): Promise<void> {
   const response = await apiFetch(getApiPath(`/api/messages/requests/${requestId}/reject`), {
     method: "POST",
@@ -1395,12 +1679,66 @@ function normalizeRecommendResponse(raw: any): AssistantRecommendResult {
     body.recommended_content_id ??
     contentRec?.id;
 
+  const knowledgeSources = asArray<any>(
+    body.knowledgeSources ?? body.knowledge_sources,
+  )
+    .map<AssistantKnowledgeSource | null>((item) => {
+      const fileId = typeof item?.fileId === "string" ? item.fileId : "";
+      const fileName =
+        typeof item?.fileName === "string"
+          ? item.fileName
+          : typeof item?.name === "string"
+            ? item.name
+            : "";
+      const excerpt =
+        typeof item?.excerpt === "string"
+          ? item.excerpt
+          : typeof item?.text === "string"
+            ? item.text
+            : "";
+      const rawScore =
+        typeof item?.score === "number" || typeof item?.score === "string"
+          ? Number(item.score)
+          : undefined;
+
+      if (!fileId || !fileName || !excerpt) {
+        return null;
+      }
+
+      return {
+        fileId,
+        fileName,
+        excerpt,
+        score:
+          rawScore !== undefined && Number.isFinite(rawScore)
+            ? rawScore
+            : undefined,
+      };
+    })
+    .filter(
+      (item): item is AssistantKnowledgeSource => item !== null,
+    );
+
+  const rawKnowledgeBaseReadyCount =
+    body.knowledgeBaseReadyCount ?? body.knowledge_base_ready_count;
+  const knowledgeBaseReadyCount =
+    typeof rawKnowledgeBaseReadyCount === "number" ||
+    typeof rawKnowledgeBaseReadyCount === "string"
+      ? Number(rawKnowledgeBaseReadyCount)
+      : undefined;
+
   return {
     reply: typeof reply === "string" ? reply : undefined,
     recommendedUserId:
       typeof recommendedUserId === "string" ? recommendedUserId : undefined,
     recommendedContentId:
       typeof recommendedContentId === "string" ? recommendedContentId : undefined,
+    knowledgeSources,
+    knowledgeBaseReadyCount:
+      knowledgeBaseReadyCount !== undefined &&
+      Number.isFinite(knowledgeBaseReadyCount)
+        ? knowledgeBaseReadyCount
+        : undefined,
   };
 }
 
@@ -1841,6 +2179,54 @@ export async function adminGenerateInvitesByApi(payload: AdminGenerateInvitesPay
   const json = await response.json();
   const body = unwrap(json as ApiEnvelope<any>);
   return Array.isArray(body) ? body : asArray<any>((body as any)?.items ?? (body as any)?.codes);
+}
+
+function normalizeAdminUsersData(raw: any): AdminUsersData {
+  const body = unwrap(raw as ApiEnvelope<any>) as any;
+  const stats = body?.stats ?? {};
+  const items = asArray<any>(body?.items).map((item) => ({
+    ...normalizeUser(item),
+    createdAt: String(item?.createdAt ?? new Date().toISOString()),
+    lastLoginAt: typeof item?.lastLoginAt === "string" ? item.lastLoginAt : undefined,
+    inviteIssuedCount: Number(item?.inviteIssuedCount ?? 0),
+    inviteUsedCount: Number(item?.inviteUsedCount ?? 0),
+    contentCount: Number(item?.contentCount ?? 0),
+    knowledgeBaseCount: Number(item?.knowledgeBaseCount ?? 0),
+    applicationCount: Number(item?.applicationCount ?? 0),
+  }));
+
+  return {
+    stats: {
+      totalCount: Number(stats?.totalCount ?? items.length),
+      activeCount: Number(stats?.activeCount ?? 0),
+      pendingCount: Number(stats?.pendingCount ?? 0),
+      suspendedCount: Number(stats?.suspendedCount ?? 0),
+      adminCount: Number(stats?.adminCount ?? 0),
+      expertCount: Number(stats?.expertCount ?? 0),
+      learnerCount: Number(stats?.learnerCount ?? 0),
+      enterpriseCount: Number(stats?.enterpriseCount ?? 0),
+    },
+    items,
+  };
+}
+
+export async function fetchAdminUsersByApi(query?: {
+  q?: string;
+  role?: Role | "ALL";
+  status?: UserAccountStatus | "ALL";
+}): Promise<AdminUsersData> {
+  const params = toQueryString({
+    q: query?.q,
+    role: query?.role && query.role !== "ALL" ? query.role : undefined,
+    status:
+      query?.status && query.status !== "ALL" ? query.status : undefined,
+  });
+  const response = await apiFetch(getApiPath(`/api/admin/users${params}`));
+  if (!response.ok) {
+    throw new Error(await parseApiError(response, "Fetch admin users"));
+  }
+  const json = await response.json();
+  return normalizeAdminUsersData(json);
 }
 
 export async function adminUpdateUserStatusByApi(userId: string, status: string): Promise<void> {

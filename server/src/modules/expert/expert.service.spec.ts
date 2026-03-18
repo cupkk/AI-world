@@ -21,6 +21,9 @@ const mockPrisma: any = {
     update: jest.fn(),
     findMany: jest.fn(),
   },
+  enterpriseNeed: {
+    findMany: jest.fn(),
+  },
   application: {
     findMany: jest.fn(),
   },
@@ -51,47 +54,56 @@ describe('ExpertService', () => {
 
   describe('getDashboard', () => {
     it('returns aggregated dashboard data for the expert workspace', async () => {
-      mockPrisma.hubItem.findMany
-        .mockResolvedValueOnce([
-          {
-            id: 'hub-1',
-            title: 'Applied AI Paper',
-            summary: 'Research update',
-            type: 'paper',
-            reviewStatus: 'published',
-            authorUserId: 'expert-1',
-            createdAt: new Date('2026-03-13T10:00:00.000Z'),
-            likesCount: 12,
-            viewsCount: 120,
-            hubItemTags: [{ tag: { name: 'AI' } }],
-            author: { id: 'expert-1', role: 'EXPERT' },
-          },
-        ])
-        .mockResolvedValueOnce([
-          {
-            id: 'hub-2',
-            title: 'Enterprise collaboration project',
-            summary: 'Need an expert partner',
-            type: 'project',
-            reviewStatus: 'published',
-            authorUserId: 'enterprise-1',
-            createdAt: new Date('2026-03-13T11:00:00.000Z'),
-            likesCount: 0,
-            viewsCount: 8,
-            hubItemTags: [{ tag: { name: 'Collaboration' } }],
-            author: {
-              id: 'enterprise-1',
-              email: 'enterprise@example.com',
-              role: 'ENTERPRISE_LEADER',
-              status: 'active',
-              profile: {
-                displayName: 'Enterprise One',
-                headline: 'Innovation Lead',
-                profileTags: [],
-              },
+      mockPrisma.hubItem.findMany.mockResolvedValue([
+        {
+          id: 'hub-1',
+          title: 'Applied AI Paper',
+          summary: 'Research update',
+          type: 'paper',
+          reviewStatus: 'published',
+          authorUserId: 'expert-1',
+          createdAt: new Date('2026-03-13T10:00:00.000Z'),
+          likesCount: 12,
+          viewsCount: 120,
+          hubItemTags: [{ tag: { name: 'AI' } }],
+          author: { id: 'expert-1', role: 'EXPERT' },
+        },
+      ]);
+      mockPrisma.researchProject.findMany.mockResolvedValue([
+        {
+          id: 'research-1',
+          title: 'Evaluation Research Track',
+          summary: 'Need applied testing partners',
+          neededSupport: 'Seeking learner assistants',
+          tags: ['Evaluation'],
+          expertUserId: 'expert-1',
+          reviewStatus: 'pending_review',
+          createdAt: new Date('2026-03-14T10:00:00.000Z'),
+        },
+      ]);
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([
+        {
+          id: 'need-1',
+          title: 'Enterprise collaboration project',
+          background: 'Need an expert partner',
+          reviewStatus: 'published',
+          enterpriseUserId: 'enterprise-1',
+          createdAt: new Date('2026-03-13T11:00:00.000Z'),
+          requiredRoles: ['EXPERT'],
+          visibility: 'public_all',
+          enterprise: {
+            id: 'enterprise-1',
+            email: 'enterprise@example.com',
+            role: 'ENTERPRISE_LEADER',
+            status: 'active',
+            profile: {
+              displayName: 'Enterprise One',
+              headline: 'Innovation Lead',
+              profileTags: [],
             },
           },
-        ]);
+        },
+      ]);
       mockPrisma.user.findMany.mockResolvedValue([
         {
           id: 'enterprise-2',
@@ -137,22 +149,30 @@ describe('ExpertService', () => {
 
       expect(result).toEqual({
         stats: {
-          totalContentCount: 1,
+          totalContentCount: 2,
           totalViews: 120,
           totalLikes: 12,
           pendingApplicantCount: 1,
         },
         myContents: [
           expect.objectContaining({
+            id: 'research-1',
+            title: 'Evaluation Research Track',
+            contentDomain: 'RESEARCH_PROJECT',
+            status: 'PENDING_REVIEW',
+          }),
+          expect.objectContaining({
             id: 'hub-1',
             title: 'Applied AI Paper',
+            contentDomain: 'HUB_ITEM',
             status: 'PUBLISHED',
           }),
         ],
         collaborationOpportunities: [
           expect.objectContaining({
-            id: 'hub-2',
+            id: 'need-1',
             title: 'Enterprise collaboration project',
+            contentDomain: 'ENTERPRISE_NEED',
             author: expect.objectContaining({
               id: 'enterprise-1',
               name: 'Enterprise One',
@@ -178,12 +198,14 @@ describe('ExpertService', () => {
         ],
       });
       expect(mockApplicationsService.listForTargets).toHaveBeenCalledWith([
-        { targetType: 'hub_project', targetId: 'hub-1' },
+        { targetType: 'research_project', targetId: 'research-1' },
       ]);
     });
 
     it('skips inbound application lookup when the expert has no authored content', async () => {
-      mockPrisma.hubItem.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+      mockPrisma.hubItem.findMany.mockResolvedValue([]);
+      mockPrisma.researchProject.findMany.mockResolvedValue([]);
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([]);
       mockPrisma.user.findMany.mockResolvedValue([]);
 
       const result = await service.getDashboard('expert-1');
@@ -201,7 +223,16 @@ describe('ExpertService', () => {
 
   describe('create', () => {
     it('creates a draft research project for the current expert', async () => {
-      mockPrisma.researchProject.create.mockResolvedValue({ id: 'project-1' });
+      mockPrisma.researchProject.create.mockResolvedValue({
+        id: 'project-1',
+        title: 'Applied AI research',
+        summary: 'A project summary',
+        neededSupport: 'Need data labeling support',
+        tags: ['AI', 'NLP'],
+        expertUserId: 'expert-1',
+        reviewStatus: 'draft',
+        createdAt: new Date('2026-03-13T10:00:00.000Z'),
+      });
 
       const result = await service.create(
         {
@@ -213,7 +244,14 @@ describe('ExpertService', () => {
         'expert-1',
       );
 
-      expect(result).toEqual({ id: 'project-1' });
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: 'project-1',
+          title: 'Applied AI research',
+          contentDomain: 'RESEARCH_PROJECT',
+          status: 'DRAFT',
+        }),
+      );
       expect(mockPrisma.researchProject.create).toHaveBeenCalledWith({
         data: {
           title: 'Applied AI research',
@@ -236,15 +274,22 @@ describe('ExpertService', () => {
       });
       mockPrisma.researchProject.update.mockResolvedValue({
         id: 'project-1',
+        title: 'Applied AI research',
+        summary: 'A project summary',
+        expertUserId: 'expert-1',
         reviewStatus: 'pending_review',
+        createdAt: new Date('2026-03-13T10:00:00.000Z'),
       });
 
       const result = await service.submit('project-1', 'expert-1');
 
-      expect(result).toEqual({
-        id: 'project-1',
-        reviewStatus: 'pending_review',
-      });
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: 'project-1',
+          contentDomain: 'RESEARCH_PROJECT',
+          status: 'PENDING_REVIEW',
+        }),
+      );
     });
 
     it('throws when the project does not exist', async () => {
@@ -282,11 +327,27 @@ describe('ExpertService', () => {
 
   describe('listMine', () => {
     it('returns the current expert projects ordered by creation time', async () => {
-      mockPrisma.researchProject.findMany.mockResolvedValue([{ id: 'project-1' }]);
+      mockPrisma.researchProject.findMany.mockResolvedValue([
+        {
+          id: 'project-1',
+          title: 'Applied AI research',
+          summary: 'A project summary',
+          expertUserId: 'expert-1',
+          reviewStatus: 'published',
+          createdAt: new Date('2026-03-13T10:00:00.000Z'),
+        },
+      ]);
 
       const result = await service.listMine('expert-1');
 
-      expect(result).toEqual([{ id: 'project-1' }]);
+      expect(result).toEqual([
+        expect.objectContaining({
+          id: 'project-1',
+          title: 'Applied AI research',
+          contentDomain: 'RESEARCH_PROJECT',
+          status: 'PUBLISHED',
+        }),
+      ]);
       expect(mockPrisma.researchProject.findMany).toHaveBeenCalledWith({
         where: { expertUserId: 'expert-1', deletedAt: null },
         orderBy: { createdAt: 'desc' },

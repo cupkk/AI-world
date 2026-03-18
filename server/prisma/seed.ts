@@ -34,11 +34,17 @@ const forceAdminPasswordReset = parseBooleanFlag(
   process.env.SEED_FORCE_RESET_ADMIN_PASSWORD,
   false,
 );
+const configuredAdminEmail =
+  process.env.SEED_ADMIN_EMAIL?.trim() || 'admin@aiworld.dev';
+const configuredAdminDisplayName =
+  process.env.SEED_ADMIN_DISPLAY_NAME?.trim() || 'AI-World Admin';
+const configuredAdminHeadline =
+  process.env.SEED_ADMIN_HEADLINE?.trim() || 'Platform Administrator';
 const configuredAdminPassword =
   process.env.SEED_ADMIN_PASSWORD || (!isProduction ? DEFAULT_DEV_ADMIN_PASSWORD : '');
 
 async function ensureAdminUser() {
-  const adminEmail = 'admin@aiworld.dev';
+  const adminEmail = configuredAdminEmail;
   const existingAdmin = await prisma.user.findUnique({
     where: { email: adminEmail },
   });
@@ -76,14 +82,14 @@ async function ensureAdminUser() {
   await prisma.profile.upsert({
     where: { userId: admin.id },
     update: {
-      displayName: 'AI-World Admin',
-      headline: 'Platform Administrator',
+      displayName: configuredAdminDisplayName,
+      headline: configuredAdminHeadline,
       onboardingDone: true,
     },
     create: {
       userId: admin.id,
-      displayName: 'AI-World Admin',
-      headline: 'Platform Administrator',
+      displayName: configuredAdminDisplayName,
+      headline: configuredAdminHeadline,
       onboardingDone: true,
     },
   });

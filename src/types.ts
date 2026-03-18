@@ -1,7 +1,9 @@
 import {
   APPLICATION_STATUS_VALUES,
   APPLICATION_TARGET_TYPE_VALUES,
+  CONTENT_DETAIL_SECTION_KIND_VALUES,
   CONTENT_STATUS_VALUES,
+  CONTENT_DOMAIN_VALUES,
   CONTENT_TYPE_VALUES,
   CONTENT_VISIBILITY_VALUES,
   DOCUMENT_STATUS_VALUES,
@@ -13,6 +15,10 @@ import {
 } from "./lib/contracts";
 
 export type Role = (typeof ROLE_VALUES)[number];
+export type UserAccountStatus =
+  | "active"
+  | "pending_identity_review"
+  | "suspended";
 
 export type EmailVisibility = (typeof EMAIL_VISIBILITY_VALUES)[number];
 
@@ -25,6 +31,7 @@ export interface User {
   name: string;
   email: string;
   role: Role;
+  status?: UserAccountStatus;
   avatar: string;
   bio?: string;
   skills?: string[];
@@ -59,24 +66,37 @@ export interface User {
 }
 
 export type ContentStatus = (typeof CONTENT_STATUS_VALUES)[number];
+export type ContentDomain = (typeof CONTENT_DOMAIN_VALUES)[number];
 export type ContentType = (typeof CONTENT_TYPE_VALUES)[number];
 export type ContentVisibility = (typeof CONTENT_VISIBILITY_VALUES)[number];
+export type ContentDetailSectionKind =
+  (typeof CONTENT_DETAIL_SECTION_KIND_VALUES)[number];
 
 export interface Content {
   id: string;
   title: string;
   description: string;
   type: ContentType;
+  contentDomain: ContentDomain;
   status: ContentStatus;
   authorId: string;
   createdAt: string;
   tags: string[];
   likes: number;
   views: number;
+  background?: string;
+  goal?: string;
+  deliverables?: string;
+  neededSupport?: string;
   coverImage?: string;
   visibility?: ContentVisibility;
   rejectReason?: string;
   author?: User;
+}
+
+export interface ContentDetailSection {
+  kind: ContentDetailSectionKind;
+  content: string;
 }
 
 export type DocumentStatus = (typeof DOCUMENT_STATUS_VALUES)[number];
@@ -112,12 +132,20 @@ export interface ChatThread {
   initiatorId: string;
 }
 
+export interface AssistantKnowledgeSource {
+  fileId: string;
+  fileName: string;
+  excerpt: string;
+  score?: number;
+}
+
 export interface AssistantMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   recommendedUser?: User;
   recommendedContent?: Content;
+  knowledgeSources?: AssistantKnowledgeSource[];
 }
 
 export type InviteStatus = (typeof INVITE_STATUS_VALUES)[number];
@@ -156,6 +184,7 @@ export interface ApplicationTargetSummary {
   id: string;
   targetType: ApplicationTargetType;
   contentType: ContentType;
+  contentDomain: ContentDomain;
   title: string;
   status?: ContentStatus;
   ownerId: string;
@@ -178,6 +207,36 @@ export interface ApplicationAuditItem extends Application {
   owner?: User;
   target: ApplicationTargetSummary;
   targetContentTitle: string;
+  ageInDays?: number;
+  auditFlags?: ApplicationAuditFlag[];
+  governanceState?: ApplicationAuditGovernanceState;
+  latestGovernanceAction?: ApplicationAuditLatestAction;
+  governanceTimeline?: ApplicationAuditLatestAction[];
+}
+
+export type ApplicationAuditFlag =
+  | "STALE_SUBMITTED"
+  | "OWNER_MISSING"
+  | "TARGET_UNAVAILABLE"
+  | "TARGET_NOT_PUBLISHED"
+  | "APPLICANT_SUSPENDED"
+  | "OWNER_SUSPENDED";
+
+export type ApplicationAuditGovernanceState = "OPEN" | "REVIEWED";
+
+export type ApplicationAuditGovernanceAction =
+  | "MARK_REVIEWED"
+  | "REJECT_APPLICATION"
+  | "REJECT_TARGET_CONTENT"
+  | "SUSPEND_APPLICANT"
+  | "SUSPEND_OWNER";
+
+export interface ApplicationAuditLatestAction {
+  action: ApplicationAuditGovernanceAction;
+  actorId: string;
+  actorName?: string;
+  createdAt: string;
+  reason?: string;
 }
 
 export interface HubDetailData {
@@ -185,6 +244,8 @@ export interface HubDetailData {
   author?: User;
   relatedContents: Content[];
   viewerApplication?: ApplicationOutboxItem | null;
+  detailSections: ContentDetailSection[];
+  applicationTargetType: ApplicationTargetType | null;
 }
 
 export interface ProfilePageSummary {
@@ -192,6 +253,11 @@ export interface ProfilePageSummary {
   totalViews: number;
   totalLikes: number;
   featuredTypes: ContentType[];
+  domainCounts: {
+    hubItems: number;
+    enterpriseNeeds: number;
+    researchProjects: number;
+  };
 }
 
 export interface ProfilePageData {
@@ -268,6 +334,11 @@ export interface AdminReport {
   reporterName: string;
   createdAt: string;
   reporter?: User;
+  targetUserId?: string;
+  targetUserName?: string;
+  targetConversationId?: string;
+  targetMessagePreview?: string;
+  targetParticipantNames?: string[];
 }
 
 export interface AdminDashboardStats {
@@ -279,6 +350,37 @@ export interface AdminDashboardData {
   stats: AdminDashboardStats;
   reviewItems: AdminReviewDashboardItem[];
   reports: AdminReport[];
+}
+
+export interface AdminAuditLogTarget {
+  id?: string;
+  targetType: string;
+  title: string;
+  status?: string;
+  contentType?: string;
+  contentDomain?: string;
+}
+
+export interface AdminAuditLogApplication {
+  id: string;
+  status: string;
+  applicant?: User;
+  owner?: User;
+  target?: AdminAuditLogTarget;
+}
+
+export interface AdminAuditLogItem {
+  id: string;
+  action: string;
+  targetType?: string;
+  targetId?: string;
+  createdAt: string;
+  actorId: string;
+  actor?: User;
+  reason?: string;
+  metadata?: Record<string, unknown>;
+  target?: AdminAuditLogTarget;
+  application?: AdminAuditLogApplication;
 }
 
 export interface AdminHubItem extends Content {
@@ -306,6 +408,32 @@ export interface AdminHubBatchResult {
   items: AdminHubItem[];
   updatedIds: string[];
   stats: AdminHubStats;
+}
+
+export interface AdminUserStats {
+  totalCount: number;
+  activeCount: number;
+  pendingCount: number;
+  suspendedCount: number;
+  adminCount: number;
+  expertCount: number;
+  learnerCount: number;
+  enterpriseCount: number;
+}
+
+export interface AdminUserItem extends User {
+  createdAt: string;
+  lastLoginAt?: string;
+  inviteIssuedCount: number;
+  inviteUsedCount: number;
+  contentCount: number;
+  knowledgeBaseCount: number;
+  applicationCount: number;
+}
+
+export interface AdminUsersData {
+  stats: AdminUserStats;
+  items: AdminUserItem[];
 }
 
 // Learning resources for Learner dashboard

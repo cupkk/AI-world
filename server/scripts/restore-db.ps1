@@ -1,6 +1,4 @@
 param(
-  [ValidateSet('production', 'staging')]
-  [string]$Stack = 'production',
   [string]$BackupFile,
   [string]$ContainerName,
   [string]$DbName,
@@ -12,14 +10,14 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if (-not $ContainerName) {
-  $ContainerName = if ($Stack -eq 'production') { 'aiworld-production-postgres-1' } else { 'aiworld-staging-postgres-1' }
+  $ContainerName = 'aiworld-production-postgres-1'
 }
 
 if (-not $DbName) {
-  $DbName = if ($Stack -eq 'production') { 'aiworld' } else { 'aiworld_staging' }
+  $DbName = 'aiworld'
 }
 
-$backupDir = Join-Path '/opt/aiworld/backups' $Stack
+$backupDir = '/opt/aiworld/backups/production'
 
 if (-not $BackupFile) {
   $latestBackup = Get-ChildItem -Path $backupDir -Filter '*.dump' -File -ErrorAction SilentlyContinue |
@@ -56,7 +54,7 @@ if ($DryRun) {
   if ($LASTEXITCODE -ne 0) { throw 'Backup archive validation failed.' }
 
   Write-Host "Dry run completed."
-  Write-Host "Stack: $Stack"
+  Write-Host 'Stack: production'
   Write-Host "Target database: $DbName"
   Write-Host "Backup file: $BackupFile"
   exit 0
@@ -87,5 +85,5 @@ if ($LASTEXITCODE -ne 0) { throw 'Restore failed.' }
 $verify = docker exec $ContainerName sh -lc "psql -U $DbUser -d $DbName -tAc \"SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';\""
 if ($LASTEXITCODE -ne 0) { throw 'Restore verification failed.' }
 
-Write-Host "Stack: $Stack"
+Write-Host 'Stack: production'
 Write-Host "Restore completed. public schema table count: $($verify.Trim())"

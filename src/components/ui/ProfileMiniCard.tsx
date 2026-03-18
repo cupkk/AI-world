@@ -45,6 +45,11 @@ export function ProfileMiniCard({ user }: ProfileMiniCardProps) {
       </CardHeader>
       <CardContent className="mt-auto flex flex-col items-center">
         <p className="mb-4 line-clamp-2 text-sm text-zinc-400">{user.bio}</p>
+        {user.researchField || user.major ? (
+          <p className="mb-4 line-clamp-1 text-xs text-zinc-500">
+            {user.researchField || user.major}
+          </p>
+        ) : null}
         <div className="mb-6 flex flex-wrap justify-center gap-1.5">
           {user.skills?.slice(0, 3).map((skill) => (
             <Badge

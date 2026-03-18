@@ -9,14 +9,14 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, IsOptional, IsArray, MaxLength } from 'class-validator';
+import { NeedVisibility } from '@prisma/client';
+import { IsString, IsOptional, IsArray, MaxLength, IsEnum } from 'class-validator';
 import { PublishService } from './publish.service';
 import {
   CurrentUser,
   CurrentUserPayload,
 } from '../../common/decorators/current-user.decorator';
 import { ActiveOnly } from '../../common/decorators/active-only.decorator';
-import { serializeHubItem } from '../../common/serializers/serialize';
 
 const VALID_HUB_ITEM_TYPES = ['paper', 'project', 'tool', 'contest', 'policy'];
 
@@ -43,8 +43,32 @@ class PublishDraftDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  @IsEnum(NeedVisibility)
+  visibility?: NeedVisibility;
+
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsString()
-  visibility?: string;
+  @MaxLength(10000)
+  background?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  goal?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  deliverables?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  neededSupport?: string;
 }
 
 class UpdatePublishDraftDto {
@@ -70,6 +94,35 @@ class UpdatePublishDraftDto {
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  background?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  goal?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  deliverables?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  neededSupport?: string;
+
+  @ApiPropertyOptional({ enum: NeedVisibility })
+  @IsOptional()
+  @IsEnum(NeedVisibility)
+  visibility?: NeedVisibility;
 }
 
 function normalizePublishType(type?: string) {
@@ -113,10 +166,16 @@ export class PublishController {
         summary: dto.description,
         type: normalizedType,
         tags: dto.tags,
+        background: dto.background,
+        goal: dto.goal,
+        deliverables: dto.deliverables,
+        neededSupport: dto.neededSupport,
+        visibility: dto.visibility,
       },
       user.id,
+      user.role,
     );
-    return serializeHubItem(item);
+    return item;
   }
 
   @Post(':id/submit')
@@ -127,7 +186,7 @@ export class PublishController {
     @CurrentUser() user: CurrentUserPayload,
   ) {
     const item = await this.publishService.submitForReview(id, user.id);
-    return serializeHubItem(item);
+    return item;
   }
 
   @Patch(':id')
@@ -147,10 +206,19 @@ export class PublishController {
         ...(dto.type !== undefined
           ? { type: normalizePublishType(dto.type) }
           : {}),
+        ...(dto.background !== undefined ? { background: dto.background } : {}),
+        ...(dto.goal !== undefined ? { goal: dto.goal } : {}),
+        ...(dto.deliverables !== undefined
+          ? { deliverables: dto.deliverables }
+          : {}),
+        ...(dto.neededSupport !== undefined
+          ? { neededSupport: dto.neededSupport }
+          : {}),
+        ...(dto.visibility !== undefined ? { visibility: dto.visibility } : {}),
       },
       user.id,
     );
-    return serializeHubItem(item);
+    return item;
   }
 
   @Post(':id/draft')
@@ -161,14 +229,22 @@ export class PublishController {
     @CurrentUser() user: CurrentUserPayload,
   ) {
     const item = await this.publishService.moveToDraft(id, user.id);
-    return serializeHubItem(item);
+    return item;
   }
 
   @Get('mine')
   @ApiOperation({ summary: 'List my authored content' })
   async listMine(@CurrentUser() user: CurrentUserPayload) {
-    const result = await this.publishService.listMine(user.id);
-    return result.map(serializeHubItem);
+    return this.publishService.listMine(user.id);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get one authored publish item' })
+  async getById(
+    @Param('id') id: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.publishService.getItemDetail(id, user.id, user.role);
   }
 
   @Delete(':id')

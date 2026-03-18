@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   NotFoundException,
@@ -14,17 +15,28 @@ const mockPrisma: any = {
     findMany: jest.fn(),
     update: jest.fn(),
   },
+  auditLog: {
+    findMany: jest.fn(),
+    create: jest.fn(),
+  },
+  user: {
+    findUnique: jest.fn(),
+    update: jest.fn(),
+  },
   enterpriseNeed: {
     findUnique: jest.fn(),
     findMany: jest.fn(),
+    update: jest.fn(),
   },
   researchProject: {
     findUnique: jest.fn(),
     findMany: jest.fn(),
+    update: jest.fn(),
   },
   hubItem: {
     findUnique: jest.fn(),
     findMany: jest.fn(),
+    update: jest.fn(),
   },
 };
 
@@ -39,6 +51,10 @@ describe('ApplicationsService', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    mockPrisma.user.findUnique.mockResolvedValue({
+      id: 'applicant-default',
+      status: 'active',
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -89,6 +105,41 @@ describe('ApplicationsService', () => {
         ),
       ).rejects.toThrow(ConflictException);
 
+      expect(mockPrisma.application.create).not.toHaveBeenCalled();
+    });
+
+    it('re-submits a previously rejected application instead of failing as a duplicate', async () => {
+      mockPrisma.application.findUnique.mockResolvedValue({
+        id: 'existing-app',
+        status: 'rejected',
+      });
+      mockPrisma.application.update.mockResolvedValue({
+        id: 'existing-app',
+        status: 'submitted',
+        message: 'Updated context after feedback.',
+      });
+
+      const result = await service.create(
+        {
+          targetType: 'enterprise_need' as any,
+          targetId: 'need-1',
+          message: 'Updated context after feedback.',
+        },
+        'user-1',
+      );
+
+      expect(result).toEqual({
+        id: 'existing-app',
+        status: 'submitted',
+        message: 'Updated context after feedback.',
+      });
+      expect(mockPrisma.application.update).toHaveBeenCalledWith({
+        where: { id: 'existing-app' },
+        data: {
+          message: 'Updated context after feedback.',
+          status: 'submitted',
+        },
+      });
       expect(mockPrisma.application.create).not.toHaveBeenCalled();
     });
   });
@@ -337,6 +388,7 @@ describe('ApplicationsService', () => {
       ]);
       mockPrisma.researchProject.findMany.mockResolvedValue([]);
       mockPrisma.hubItem.findMany.mockResolvedValue([]);
+      mockPrisma.auditLog.findMany.mockResolvedValue([]);
 
       const result = await service.listAudit();
 
@@ -358,6 +410,421 @@ describe('ApplicationsService', () => {
         }),
       ]);
     });
+
+    it('adds governance flags for stale pending rows and unavailable targets', async () => {
+      const nowSpy = jest
+        .spyOn(Date, 'now')
+        .mockReturnValue(new Date('2026-03-16T10:00:00.000Z').getTime());
+
+      mockPrisma.application.findMany.mockResolvedValue([
+        {
+          id: 'app-4',
+          applicantUserId: 'learner-4',
+          targetType: 'hub_project',
+          targetId: 'missing-hub-1',
+          message: 'Still waiting on a response.',
+          status: 'submitted',
+          createdAt: new Date('2026-03-01T10:00:00.000Z'),
+          applicant: {
+            id: 'learner-4',
+            email: 'learner4@example.com',
+            role: 'LEARNER',
+            profile: buildProfile('Learner Pending'),
+          },
+        },
+      ]);
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([]);
+      mockPrisma.researchProject.findMany.mockResolvedValue([]);
+      mockPrisma.hubItem.findMany.mockResolvedValue([]);
+      mockPrisma.auditLog.findMany.mockResolvedValue([]);
+
+      const result = await service.listAudit();
+
+      expect(result).toEqual([
+        expect.objectContaining({
+          id: 'app-4',
+          ageInDays: 15,
+          auditFlags: expect.arrayContaining([
+            'STALE_SUBMITTED',
+            'OWNER_MISSING',
+            'TARGET_UNAVAILABLE',
+          ]),
+          target: expect.objectContaining({
+            title: 'Unavailable target',
+          }),
+        }),
+      ]);
+
+      nowSpy.mockRestore();
+    });
+
+    it('adds linked governance flags when user or content governance already changed', async () => {
+      mockPrisma.application.findMany.mockResolvedValue([
+        {
+          id: 'app-4b',
+          applicantUserId: 'learner-4b',
+          targetType: 'enterprise_need',
+          targetId: 'need-4b',
+          message: 'Still available to help.',
+          status: 'submitted',
+          createdAt: new Date('2026-03-12T10:00:00.000Z'),
+          applicant: {
+            id: 'learner-4b',
+            email: 'learner4b@example.com',
+            role: 'LEARNER',
+            status: 'suspended',
+            profile: buildProfile('Learner Suspended'),
+          },
+        },
+      ]);
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([
+        {
+          id: 'need-4b',
+          title: 'Moderated Need',
+          background: 'Need an implementation partner.',
+          goal: 'Recover a stalled delivery.',
+          requiredRoles: ['ml'],
+          reviewStatus: 'rejected',
+          visibility: 'public_all',
+          enterpriseUserId: 'enterprise-4b',
+          createdAt: new Date('2026-03-10T10:00:00.000Z'),
+          enterprise: {
+            id: 'enterprise-4b',
+            email: 'enterprise4b@example.com',
+            role: 'ENTERPRISE_LEADER',
+            status: 'suspended',
+            profile: buildProfile('Owner Suspended'),
+          },
+        },
+      ]);
+      mockPrisma.researchProject.findMany.mockResolvedValue([]);
+      mockPrisma.hubItem.findMany.mockResolvedValue([]);
+      mockPrisma.auditLog.findMany.mockResolvedValue([]);
+
+      const result = await service.listAudit();
+
+      expect(result).toEqual([
+        expect.objectContaining({
+          id: 'app-4b',
+          auditFlags: expect.arrayContaining([
+            'TARGET_NOT_PUBLISHED',
+            'APPLICANT_SUSPENDED',
+            'OWNER_SUSPENDED',
+          ]),
+          target: expect.objectContaining({
+            title: 'Moderated Need',
+            status: 'REJECTED',
+          }),
+        }),
+      ]);
+    });
+
+    it('surfaces the latest governance action when an audit record was already handled', async () => {
+      mockPrisma.application.findMany.mockResolvedValue([
+        {
+          id: 'app-5',
+          applicantUserId: 'learner-5',
+          targetType: 'research_project',
+          targetId: 'project-2',
+          message: 'Can contribute to evaluation.',
+          status: 'submitted',
+          createdAt: new Date('2026-03-10T10:00:00.000Z'),
+          applicant: {
+            id: 'learner-5',
+            email: 'learner5@example.com',
+            role: 'LEARNER',
+            profile: buildProfile('Learner Reviewed'),
+          },
+        },
+      ]);
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([]);
+      mockPrisma.researchProject.findMany.mockResolvedValue([
+        {
+          id: 'project-2',
+          title: 'Agent Eval',
+          summary: 'Run evaluation work.',
+          neededSupport: 'Prompt QA',
+          tags: ['agents'],
+          reviewStatus: 'published',
+          expertUserId: 'expert-5',
+          createdAt: new Date('2026-03-08T10:00:00.000Z'),
+          expert: {
+            id: 'expert-5',
+            email: 'expert5@example.com',
+            role: 'EXPERT',
+            profile: buildProfile('Owner Reviewed'),
+          },
+        },
+      ]);
+      mockPrisma.hubItem.findMany.mockResolvedValue([]);
+      mockPrisma.auditLog.findMany.mockResolvedValue([
+        {
+          id: 'audit-1',
+          actorId: 'admin-1',
+          action: 'application_audit_mark_reviewed',
+          targetType: 'application',
+          targetId: 'app-5',
+          metadata: { reason: 'Checked during weekly audit.' },
+          createdAt: new Date('2026-03-16T10:00:00.000Z'),
+          actor: {
+            id: 'admin-1',
+            email: 'admin@example.com',
+            role: 'ADMIN',
+            profile: buildProfile('Admin One'),
+          },
+        },
+        {
+          id: 'audit-2',
+          actorId: 'admin-2',
+          action: 'application_audit_reject_application',
+          targetType: 'application',
+          targetId: 'app-5',
+          metadata: { reason: 'Rejected during earlier triage.' },
+          createdAt: new Date('2026-03-15T10:00:00.000Z'),
+          actor: {
+            id: 'admin-2',
+            email: 'admin-two@example.com',
+            role: 'ADMIN',
+            profile: buildProfile('Admin Two'),
+          },
+        },
+      ]);
+
+      const result = await service.listAudit();
+
+      expect(result).toEqual([
+        expect.objectContaining({
+          id: 'app-5',
+          governanceState: 'REVIEWED',
+          latestGovernanceAction: expect.objectContaining({
+            action: 'MARK_REVIEWED',
+            actorId: 'admin-1',
+            actorName: 'Admin One',
+            reason: 'Checked during weekly audit.',
+          }),
+          governanceTimeline: [
+            expect.objectContaining({
+              action: 'MARK_REVIEWED',
+              actorId: 'admin-1',
+              actorName: 'Admin One',
+            }),
+            expect.objectContaining({
+              action: 'REJECT_APPLICATION',
+              actorId: 'admin-2',
+              actorName: 'Admin Two',
+            }),
+          ],
+        }),
+      ]);
+    });
+  });
+
+  describe('applyAuditAction', () => {
+    it('can reject stale applications and log the governance action', async () => {
+      mockPrisma.application.findMany.mockResolvedValue([
+        {
+          id: 'app-6',
+          applicantUserId: 'learner-6',
+          targetType: 'hub_project',
+          targetId: 'hub-6',
+          message: 'Still interested.',
+          status: 'submitted',
+          createdAt: new Date('2026-03-01T10:00:00.000Z'),
+          applicant: {
+            id: 'learner-6',
+            email: 'learner6@example.com',
+            role: 'LEARNER',
+            profile: buildProfile('Learner Six'),
+          },
+        },
+      ]);
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([]);
+      mockPrisma.researchProject.findMany.mockResolvedValue([]);
+      mockPrisma.hubItem.findMany.mockResolvedValue([
+        {
+          id: 'hub-6',
+          title: 'Synthetic Data Project',
+          summary: 'Need help on evaluation.',
+          type: 'project',
+          reviewStatus: 'published',
+          authorUserId: 'expert-6',
+          createdAt: new Date('2026-02-20T10:00:00.000Z'),
+          hubItemTags: [],
+          likesCount: 0,
+          viewsCount: 0,
+          author: {
+            id: 'expert-6',
+            email: 'expert6@example.com',
+            role: 'EXPERT',
+            profile: buildProfile('Owner Six'),
+          },
+        },
+      ]);
+
+      const result = await service.applyAuditAction(
+        ['app-6'],
+        'REJECT_APPLICATION',
+        'admin-1',
+        'Queue expired.',
+      );
+
+      expect(result).toEqual({ updatedIds: ['app-6'] });
+      expect(mockPrisma.application.update).toHaveBeenCalledWith({
+        where: { id: 'app-6' },
+        data: { status: 'rejected' },
+      });
+      expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          actorId: 'admin-1',
+          action: 'application_audit_reject_application',
+          targetType: 'application',
+          targetId: 'app-6',
+        }),
+      });
+    });
+
+    it('can reject linked target content from the audit view and log the linkage', async () => {
+      mockPrisma.application.findMany.mockResolvedValue([
+        {
+          id: 'app-6b',
+          applicantUserId: 'expert-6b',
+          targetType: 'enterprise_need',
+          targetId: 'need-6b',
+          message: 'Can help scope the delivery team.',
+          status: 'accepted',
+          createdAt: new Date('2026-03-06T10:00:00.000Z'),
+          applicant: {
+            id: 'expert-6b',
+            email: 'expert6b@example.com',
+            role: 'EXPERT',
+            profile: buildProfile('Expert Six B'),
+          },
+        },
+      ]);
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([
+        {
+          id: 'need-6b',
+          title: 'Ops Copilot Rollout',
+          background: 'Need a governance reset.',
+          goal: 'Stabilize delivery.',
+          requiredRoles: ['ml'],
+          reviewStatus: 'pending_review',
+          enterpriseUserId: 'enterprise-6b',
+          createdAt: new Date('2026-03-01T10:00:00.000Z'),
+          enterprise: {
+            id: 'enterprise-6b',
+            email: 'enterprise6b@example.com',
+            role: 'ENTERPRISE_LEADER',
+            profile: buildProfile('Enterprise Six B'),
+          },
+        },
+      ]);
+      mockPrisma.researchProject.findMany.mockResolvedValue([]);
+      mockPrisma.hubItem.findMany.mockResolvedValue([]);
+
+      const result = await service.applyAuditAction(
+        ['app-6b'],
+        'REJECT_TARGET_CONTENT',
+        'admin-6b',
+        'Target no longer passes governance review.',
+      );
+
+      expect(result).toEqual({ updatedIds: ['app-6b'] });
+      expect(mockPrisma.enterpriseNeed.update).toHaveBeenCalledWith({
+        where: { id: 'need-6b' },
+        data: {
+          reviewStatus: 'rejected',
+          rejectReason: 'Target no longer passes governance review.',
+        },
+      });
+      expect(mockPrisma.auditLog.create).toHaveBeenNthCalledWith(1, {
+        data: {
+          actorId: 'admin-6b',
+          action: 'reject',
+          targetType: 'enterprise_need',
+          targetId: 'need-6b',
+          metadata: {
+            reason: 'Target no longer passes governance review.',
+            source: 'application_audit',
+            sourceApplicationId: 'app-6b',
+          },
+        },
+      });
+      expect(mockPrisma.auditLog.create).toHaveBeenNthCalledWith(2, {
+        data: {
+          actorId: 'admin-6b',
+          action: 'application_audit_reject_target_content',
+          targetType: 'application',
+          targetId: 'app-6b',
+          metadata: {
+            reason: 'Target no longer passes governance review.',
+            applicantUserId: 'expert-6b',
+            ownerUserId: 'enterprise-6b',
+            applicationAction: 'REJECT_TARGET_CONTENT',
+            governedTargetId: 'need-6b',
+            governedTargetType: 'ENTERPRISE_NEED',
+          },
+        },
+      });
+    });
+
+    it('can suspend the applicant from the audit view', async () => {
+      mockPrisma.application.findMany.mockResolvedValue([
+        {
+          id: 'app-7',
+          applicantUserId: 'learner-7',
+          targetType: 'enterprise_need',
+          targetId: 'need-7',
+          message: 'Available this month.',
+          status: 'submitted',
+          createdAt: new Date('2026-03-05T10:00:00.000Z'),
+          applicant: {
+            id: 'learner-7',
+            email: 'learner7@example.com',
+            role: 'LEARNER',
+            profile: buildProfile('Learner Seven'),
+          },
+        },
+      ]);
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([
+        {
+          id: 'need-7',
+          title: 'Enterprise Need Seven',
+          background: 'Ops work',
+          goal: 'Deliver pipeline',
+          requiredRoles: ['ml'],
+          reviewStatus: 'published',
+          enterpriseUserId: 'enterprise-7',
+          createdAt: new Date('2026-03-01T10:00:00.000Z'),
+          enterprise: {
+            id: 'enterprise-7',
+            email: 'enterprise7@example.com',
+            role: 'ENTERPRISE_LEADER',
+            profile: buildProfile('Enterprise Seven'),
+          },
+        },
+      ]);
+      mockPrisma.researchProject.findMany.mockResolvedValue([]);
+      mockPrisma.hubItem.findMany.mockResolvedValue([]);
+
+      await service.applyAuditAction(
+        ['app-7'],
+        'SUSPEND_APPLICANT',
+        'admin-2',
+      );
+
+      expect(mockPrisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'learner-7' },
+        data: { status: 'suspended' },
+      });
+      expect(mockPrisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          actorId: 'admin-2',
+          action: 'application_audit_suspend_applicant',
+          targetId: 'app-7',
+        }),
+      });
+    });
   });
 
   describe('updateStatus', () => {
@@ -372,6 +839,7 @@ describe('ApplicationsService', () => {
     it('updates status when the enterprise need owner performs the action', async () => {
       mockPrisma.application.findUnique.mockResolvedValue({
         id: 'app-1',
+        applicantUserId: 'learner-1',
         targetType: 'enterprise_need',
         targetId: 'need-1',
       });
@@ -393,9 +861,49 @@ describe('ApplicationsService', () => {
       });
     });
 
+    it('rejects owner-side application updates when the target is no longer published', async () => {
+      mockPrisma.application.findUnique.mockResolvedValue({
+        id: 'app-1b',
+        applicantUserId: 'learner-1b',
+        targetType: 'enterprise_need',
+        targetId: 'need-1b',
+      });
+      mockPrisma.enterpriseNeed.findUnique.mockResolvedValue({
+        id: 'need-1b',
+        enterpriseUserId: 'owner-1',
+        reviewStatus: 'rejected',
+      });
+
+      await expect(
+        service.updateStatus('app-1b', 'accepted' as any, 'owner-1'),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(mockPrisma.application.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects owner-side application updates when the applicant account is suspended', async () => {
+      mockPrisma.application.findUnique.mockResolvedValue({
+        id: 'app-1c',
+        applicantUserId: 'learner-1c',
+        targetType: 'enterprise_need',
+        targetId: 'need-1c',
+      });
+      mockPrisma.user.findUnique.mockResolvedValue({
+        id: 'learner-1c',
+        status: 'suspended',
+      });
+
+      await expect(
+        service.updateStatus('app-1c', 'accepted' as any, 'owner-1'),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(mockPrisma.application.update).not.toHaveBeenCalled();
+    });
+
     it('updates status when the research project owner performs the action', async () => {
       mockPrisma.application.findUnique.mockResolvedValue({
         id: 'app-2',
+        applicantUserId: 'learner-2',
         targetType: 'research_project',
         targetId: 'project-1',
       });
@@ -416,6 +924,7 @@ describe('ApplicationsService', () => {
     it('updates status when the hub project author performs the action', async () => {
       mockPrisma.application.findUnique.mockResolvedValue({
         id: 'app-3',
+        applicantUserId: 'learner-3',
         targetType: 'hub_project',
         targetId: 'hub-1',
       });
@@ -436,6 +945,7 @@ describe('ApplicationsService', () => {
     it('rejects status updates by non-owners', async () => {
       mockPrisma.application.findUnique.mockResolvedValue({
         id: 'app-1',
+        applicantUserId: 'learner-1',
         targetType: 'enterprise_need',
         targetId: 'need-1',
       });

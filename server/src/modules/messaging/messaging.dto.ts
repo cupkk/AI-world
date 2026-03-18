@@ -63,7 +63,7 @@ export class BlockDto {
 
 /** 举报 */
 export class ReportDto {
-  @ApiProperty({ description: '举报目标类型（user / message）' })
+  @ApiProperty({ description: '举报目标类型（user / message / conversation）' })
   @IsString()
   @IsNotEmpty()
   @MaxLength(50)

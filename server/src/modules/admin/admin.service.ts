@@ -4,11 +4,12 @@ import {
   BadRequestException,
   Logger,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { ApplicationTargetType, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import {
   normalizeContentStatusValue,
   normalizeContentTypeValue,
+  normalizeRoleValue,
 } from '../../common/contracts';
 import {
   serializeHubItem,
@@ -33,6 +34,11 @@ export interface AdminDashboardReport {
   reporterName: string;
   createdAt: string;
   reporter?: SerializedUser;
+  targetUserId?: string;
+  targetUserName?: string;
+  targetConversationId?: string;
+  targetMessagePreview?: string;
+  targetParticipantNames?: string[];
 }
 
 export interface AdminDashboardData {
@@ -74,6 +80,88 @@ export interface AdminHubManagementQuery {
   status?: string;
   type?: string;
 }
+
+export interface AdminUserManagementItem extends SerializedUser {
+  createdAt: string;
+  lastLoginAt?: string;
+  inviteIssuedCount: number;
+  inviteUsedCount: number;
+  contentCount: number;
+  knowledgeBaseCount: number;
+  applicationCount: number;
+}
+
+export interface AdminUserManagementData {
+  stats: {
+    totalCount: number;
+    activeCount: number;
+    pendingCount: number;
+    suspendedCount: number;
+    adminCount: number;
+    expertCount: number;
+    learnerCount: number;
+    enterpriseCount: number;
+  };
+  items: AdminUserManagementItem[];
+}
+
+export interface AdminUsersQuery {
+  q?: string;
+  status?: string;
+  role?: string;
+}
+
+export interface AdminAuditLogTarget {
+  id?: string;
+  targetType: string;
+  title: string;
+  status?: string;
+  contentType?: string;
+  contentDomain?: string;
+}
+
+export interface AdminAuditLogApplication {
+  id: string;
+  status: string;
+  applicant?: SerializedUser;
+  owner?: SerializedUser;
+  target?: AdminAuditLogTarget;
+}
+
+export interface AdminAuditLogItem {
+  id: string;
+  action: string;
+  targetType?: string;
+  targetId?: string;
+  createdAt: string;
+  actorId: string;
+  actor?: SerializedUser;
+  reason?: string;
+  metadata?: Record<string, unknown>;
+  target?: AdminAuditLogTarget;
+  application?: AdminAuditLogApplication;
+}
+
+export interface AdminAuditLogQuery {
+  q?: string;
+  action?: string;
+  targetType?: string;
+  limit?: number;
+}
+
+type AuditLogApplicationRecord = {
+  id: string;
+  targetType: ApplicationTargetType;
+  targetId: string;
+  status: string;
+  applicantUserId: string;
+  applicant?: any;
+};
+
+type AuditLogApplicationTargetSummary = AdminAuditLogTarget & {
+  ownerId?: string;
+  owner?: SerializedUser;
+};
 
 @Injectable()
 export class AdminService {
@@ -156,6 +244,7 @@ export class AdminService {
         title: (u as any).profile?.displayName ?? u.email,
         description: 'Identity review',
         type: 'USER_IDENTITY',
+        contentDomain: 'HUB_ITEM',
         status: 'PENDING_REVIEW',
         authorId: u.id,
         createdAt: u.createdAt?.toISOString?.() ?? String(u.createdAt ?? ''),
@@ -243,6 +332,7 @@ export class AdminService {
         title: user.profile?.displayName ?? user.email,
         description: 'Identity review',
         type: 'USER_IDENTITY',
+        contentDomain: 'HUB_ITEM',
         status: 'PENDING_REVIEW',
         authorId: user.id,
         createdAt: user.createdAt?.toISOString?.() ?? String(user.createdAt ?? ''),
@@ -256,9 +346,7 @@ export class AdminService {
         new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
     );
 
-    const serializedReports = reports.map((report) =>
-      this.serializeDashboardReport(report),
-    );
+    const serializedReports = await this.serializeDashboardReports(reports);
 
     return {
       stats: {
@@ -326,6 +414,130 @@ export class AdminService {
     query: AdminHubManagementQuery = {},
   ): Promise<AdminHubManagementData> {
     return this.listHubItems(query);
+  }
+
+  async listUsers(
+    query: AdminUsersQuery = {},
+  ): Promise<AdminUserManagementData> {
+    const baseWhere = this.buildUserManagementWhere(query, false);
+    const filteredWhere = this.buildUserManagementWhere(query, true);
+
+    const [statRows, users] = await Promise.all([
+      this.prisma.user.findMany({
+        where: baseWhere,
+        select: {
+          role: true,
+          status: true,
+        },
+      }),
+      this.prisma.user.findMany({
+        where: filteredWhere,
+        include: {
+          profile: {
+            include: {
+              profileTags: {
+                include: {
+                  tag: true,
+                },
+              },
+            },
+          },
+          boundInvite: {
+            select: {
+              id: true,
+            },
+          },
+          _count: {
+            select: {
+              applications: true,
+              authoredHubItems: true,
+              enterpriseNeeds: true,
+              issuedInvites: true,
+              kbFiles: true,
+              researchProjects: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+
+    const items = users.map((user) => ({
+      ...serializeUser(user),
+      createdAt:
+        user.createdAt?.toISOString?.() ?? String(user.createdAt ?? ''),
+      lastLoginAt:
+        user.lastLoginAt?.toISOString?.() ?? undefined,
+      inviteIssuedCount: user._count.issuedInvites,
+      inviteUsedCount: user.boundInvite ? 1 : 0,
+      contentCount:
+        user._count.authoredHubItems +
+        user._count.enterpriseNeeds +
+        user._count.researchProjects,
+      knowledgeBaseCount: user._count.kbFiles,
+      applicationCount: user._count.applications,
+    }));
+
+    return {
+      stats: {
+        totalCount: statRows.length,
+        activeCount: statRows.filter((item) => item.status === 'active').length,
+        pendingCount: statRows.filter(
+          (item) => item.status === 'pending_identity_review',
+        ).length,
+        suspendedCount: statRows.filter(
+          (item) => item.status === 'suspended',
+        ).length,
+        adminCount: statRows.filter((item) => item.role === 'ADMIN').length,
+        expertCount: statRows.filter((item) => item.role === 'EXPERT').length,
+        learnerCount: statRows.filter((item) => item.role === 'LEARNER').length,
+        enterpriseCount: statRows.filter(
+          (item) => item.role === 'ENTERPRISE_LEADER',
+        ).length,
+      },
+      items,
+    };
+  }
+
+  async listAuditLogs(
+    query: AdminAuditLogQuery = {},
+  ): Promise<AdminAuditLogItem[]> {
+    const normalizedQuery = query.q?.trim().toLowerCase() ?? '';
+    const normalizedTargetType = this.normalizeAdminAuditTargetType(
+      query.targetType,
+    );
+    const normalizedLimit = this.normalizeAuditLogLimit(query.limit);
+    const fetchLimit = normalizedQuery
+      ? Math.max(normalizedLimit * 5, 200)
+      : normalizedLimit;
+
+    const where: Prisma.AuditLogWhereInput = {};
+    if (query.action?.trim()) {
+      where.action = query.action.trim();
+    }
+    if (normalizedTargetType) {
+      where.targetType = normalizedTargetType.toLowerCase();
+    }
+
+    const logs = await this.prisma.auditLog.findMany({
+      where,
+      include: {
+        actor: {
+          include: this.reviewUserInclude,
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: fetchLimit,
+    });
+
+    const serializedLogs = await this.serializeAuditLogs(logs);
+    if (!normalizedQuery) {
+      return serializedLogs.slice(0, normalizedLimit);
+    }
+
+    return serializedLogs
+      .filter((item) => this.matchesAuditLogQuery(item, normalizedQuery))
+      .slice(0, normalizedLimit);
   }
 
   async updateContentManagementItem(
@@ -653,7 +865,7 @@ export class AdminService {
       orderBy: { createdAt: 'desc' },
     });
 
-    return reports.map((report) => this.serializeDashboardReport(report));
+    return this.serializeDashboardReports(reports);
   }
 
   async updateReportStatus(
@@ -678,6 +890,624 @@ export class AdminService {
     });
 
     return report;
+  }
+
+  private async serializeAuditLogs(logs: any[]): Promise<AdminAuditLogItem[]> {
+    if (logs.length === 0) {
+      return [];
+    }
+
+    const applicationIds = new Set<string>();
+    const hubItemIds = new Set<string>();
+    const enterpriseNeedIds = new Set<string>();
+    const researchProjectIds = new Set<string>();
+    const userIds = new Set<string>();
+    const reportIds = new Set<string>();
+
+    for (const log of logs) {
+      const normalizedTargetType = this.normalizeAdminAuditTargetType(
+        log.targetType,
+      );
+      const metadata = this.extractAuditLogMetadata(log.metadata);
+
+      if (
+        normalizedTargetType === 'APPLICATION' &&
+        typeof log.targetId === 'string' &&
+        log.targetId
+      ) {
+        applicationIds.add(log.targetId);
+      }
+
+      if (
+        typeof metadata?.sourceApplicationId === 'string' &&
+        metadata.sourceApplicationId
+      ) {
+        applicationIds.add(metadata.sourceApplicationId);
+      }
+
+      if (typeof log.targetId !== 'string' || !log.targetId) {
+        continue;
+      }
+
+      switch (normalizedTargetType) {
+        case 'HUB_ITEM':
+          hubItemIds.add(log.targetId);
+          break;
+        case 'ENTERPRISE_NEED':
+          enterpriseNeedIds.add(log.targetId);
+          break;
+        case 'RESEARCH_PROJECT':
+          researchProjectIds.add(log.targetId);
+          break;
+        case 'USER':
+        case 'USER_IDENTITY':
+          userIds.add(log.targetId);
+          break;
+        case 'REPORT':
+          reportIds.add(log.targetId);
+          break;
+        default:
+          break;
+      }
+    }
+
+    const [
+      applications,
+      hubItems,
+      enterpriseNeeds,
+      researchProjects,
+      users,
+      reports,
+    ] = await Promise.all([
+      applicationIds.size > 0
+        ? this.prisma.application.findMany({
+            where: { id: { in: Array.from(applicationIds) } },
+            include: {
+              applicant: {
+                include: this.reviewUserInclude,
+              },
+            },
+          })
+        : Promise.resolve([]),
+      hubItemIds.size > 0
+        ? this.prisma.hubItem.findMany({
+            where: { id: { in: Array.from(hubItemIds) } },
+            include: {
+              author: {
+                include: this.reviewUserInclude,
+              },
+              hubItemTags: {
+                include: {
+                  tag: true,
+                },
+              },
+            },
+          })
+        : Promise.resolve([]),
+      enterpriseNeedIds.size > 0
+        ? this.prisma.enterpriseNeed.findMany({
+            where: { id: { in: Array.from(enterpriseNeedIds) } },
+            include: {
+              enterprise: {
+                include: this.reviewUserInclude,
+              },
+            },
+          })
+        : Promise.resolve([]),
+      researchProjectIds.size > 0
+        ? this.prisma.researchProject.findMany({
+            where: { id: { in: Array.from(researchProjectIds) } },
+            include: {
+              expert: {
+                include: this.reviewUserInclude,
+              },
+            },
+          })
+        : Promise.resolve([]),
+      userIds.size > 0
+        ? this.prisma.user.findMany({
+            where: { id: { in: Array.from(userIds) } },
+            include: this.reviewUserInclude,
+          })
+        : Promise.resolve([]),
+      reportIds.size > 0
+        ? this.prisma.report.findMany({
+            where: { id: { in: Array.from(reportIds) } },
+            include: {
+              reporter: {
+                include: this.reviewUserInclude,
+              },
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const applicationContextMap = await this.buildAuditLogApplicationContextMap(
+      applications,
+    );
+    const hubTargetMap = new Map(
+      hubItems.map((item) => [
+        item.id,
+        this.buildAuditLogTargetFromHubItem(item),
+      ]),
+    );
+    const enterpriseNeedTargetMap = new Map(
+      enterpriseNeeds.map((item) => [
+        item.id,
+        this.buildAuditLogTargetFromEnterpriseNeed(item),
+      ]),
+    );
+    const researchProjectTargetMap = new Map(
+      researchProjects.map((item) => [
+        item.id,
+        this.buildAuditLogTargetFromResearchProject(item),
+      ]),
+    );
+    const userTargetMap = new Map(
+      users.map((item) => [item.id, this.buildAuditLogTargetFromUser(item)]),
+    );
+    const reportTargetMap = new Map(
+      reports.map((item) => [item.id, this.buildAuditLogTargetFromReport(item)]),
+    );
+
+    return logs.map((log) => {
+      const normalizedTargetType = this.normalizeAdminAuditTargetType(
+        log.targetType,
+      );
+      const metadata = this.extractAuditLogMetadata(log.metadata);
+      const actor = log.actor
+        ? this.serializeReviewAuthor(log.actor)
+        : undefined;
+      const sourceApplicationId =
+        normalizedTargetType === 'APPLICATION'
+          ? log.targetId ?? undefined
+          : typeof metadata?.sourceApplicationId === 'string'
+            ? metadata.sourceApplicationId
+            : undefined;
+      const application = sourceApplicationId
+        ? applicationContextMap.get(sourceApplicationId)
+        : undefined;
+      let target: AdminAuditLogTarget | undefined;
+
+      switch (normalizedTargetType) {
+        case 'APPLICATION':
+          target = application?.target;
+          break;
+        case 'HUB_ITEM':
+          target =
+            (typeof log.targetId === 'string' && log.targetId
+              ? hubTargetMap.get(log.targetId)
+              : undefined) ??
+            this.buildFallbackAuditTarget(
+              normalizedTargetType,
+              log.targetId,
+              metadata,
+            );
+          break;
+        case 'ENTERPRISE_NEED':
+          target =
+            (typeof log.targetId === 'string' && log.targetId
+              ? enterpriseNeedTargetMap.get(log.targetId)
+              : undefined) ??
+            this.buildFallbackAuditTarget(
+              normalizedTargetType,
+              log.targetId,
+              metadata,
+            );
+          break;
+        case 'RESEARCH_PROJECT':
+          target =
+            (typeof log.targetId === 'string' && log.targetId
+              ? researchProjectTargetMap.get(log.targetId)
+              : undefined) ??
+            this.buildFallbackAuditTarget(
+              normalizedTargetType,
+              log.targetId,
+              metadata,
+            );
+          break;
+        case 'USER':
+        case 'USER_IDENTITY':
+          target =
+            (typeof log.targetId === 'string' && log.targetId
+              ? userTargetMap.get(log.targetId)
+              : undefined) ??
+            this.buildFallbackAuditTarget(
+              normalizedTargetType,
+              log.targetId,
+              metadata,
+            );
+          break;
+        case 'REPORT':
+          target =
+            (typeof log.targetId === 'string' && log.targetId
+              ? reportTargetMap.get(log.targetId)
+              : undefined) ??
+            this.buildFallbackAuditTarget(
+              normalizedTargetType,
+              log.targetId,
+              metadata,
+            );
+          break;
+        case 'INVITE':
+          target = this.buildFallbackAuditTarget(
+            normalizedTargetType,
+            log.targetId,
+            metadata,
+          );
+          break;
+        default:
+          target = this.buildFallbackAuditTarget(
+            normalizedTargetType,
+            log.targetId,
+            metadata,
+          );
+          break;
+      }
+
+      return {
+        id: log.id,
+        action: log.action,
+        targetType: normalizedTargetType,
+        targetId: log.targetId ?? undefined,
+        createdAt:
+          log.createdAt?.toISOString?.() ?? String(log.createdAt ?? ''),
+        actorId: log.actorId,
+        actor,
+        reason:
+          typeof metadata?.reason === 'string' ? metadata.reason : undefined,
+        metadata,
+        target,
+        application,
+      };
+    });
+  }
+
+  private async buildAuditLogApplicationContextMap(
+    applications: AuditLogApplicationRecord[],
+  ) {
+    if (applications.length === 0) {
+      return new Map<string, AdminAuditLogApplication>();
+    }
+
+    const enterpriseNeedIds = new Set<string>();
+    const researchProjectIds = new Set<string>();
+    const hubProjectIds = new Set<string>();
+
+    for (const application of applications) {
+      switch (application.targetType) {
+        case 'enterprise_need':
+          enterpriseNeedIds.add(application.targetId);
+          break;
+        case 'research_project':
+          researchProjectIds.add(application.targetId);
+          break;
+        case 'hub_project':
+          hubProjectIds.add(application.targetId);
+          break;
+        default:
+          break;
+      }
+    }
+
+    const [needs, researchProjects, hubItems] = await Promise.all([
+      enterpriseNeedIds.size > 0
+        ? this.prisma.enterpriseNeed.findMany({
+            where: { id: { in: Array.from(enterpriseNeedIds) } },
+            include: {
+              enterprise: {
+                include: this.reviewUserInclude,
+              },
+            },
+          })
+        : Promise.resolve([]),
+      researchProjectIds.size > 0
+        ? this.prisma.researchProject.findMany({
+            where: { id: { in: Array.from(researchProjectIds) } },
+            include: {
+              expert: {
+                include: this.reviewUserInclude,
+              },
+            },
+          })
+        : Promise.resolve([]),
+      hubProjectIds.size > 0
+        ? this.prisma.hubItem.findMany({
+            where: { id: { in: Array.from(hubProjectIds) } },
+            include: {
+              author: {
+                include: this.reviewUserInclude,
+              },
+              hubItemTags: {
+                include: {
+                  tag: true,
+                },
+              },
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const targetMap = new Map<string, AuditLogApplicationTargetSummary>();
+
+    for (const need of needs) {
+      const serializedNeed = serializeEnterpriseNeed(need);
+      targetMap.set(this.auditLogApplicationTargetKey('enterprise_need', need.id), {
+        id: serializedNeed.id,
+        targetType: 'ENTERPRISE_NEED',
+        title: serializedNeed.title,
+        status: serializedNeed.status,
+        contentType: serializedNeed.type,
+        contentDomain: serializedNeed.contentDomain,
+        ownerId: need.enterpriseUserId,
+        owner: need.enterprise
+          ? this.serializeReviewAuthor(need.enterprise)
+          : undefined,
+      });
+    }
+
+    for (const project of researchProjects) {
+      const serializedProject = serializeResearchProject(project);
+      targetMap.set(
+        this.auditLogApplicationTargetKey('research_project', project.id),
+        {
+          id: serializedProject.id,
+          targetType: 'RESEARCH_PROJECT',
+          title: serializedProject.title,
+          status: serializedProject.status,
+          contentType: serializedProject.type,
+          contentDomain: serializedProject.contentDomain,
+          ownerId: project.expertUserId,
+          owner: project.expert
+            ? this.serializeReviewAuthor(project.expert)
+            : undefined,
+        },
+      );
+    }
+
+    for (const item of hubItems) {
+      const serializedItem = serializeHubItem(item);
+      targetMap.set(this.auditLogApplicationTargetKey('hub_project', item.id), {
+        id: serializedItem.id,
+        targetType: 'PROJECT',
+        title: serializedItem.title,
+        status: serializedItem.status,
+        contentType: serializedItem.type,
+        contentDomain: serializedItem.contentDomain,
+        ownerId: item.authorUserId ?? undefined,
+        owner: item.author ? this.serializeReviewAuthor(item.author) : undefined,
+      });
+    }
+
+    const applicationMap = new Map<string, AdminAuditLogApplication>();
+
+    for (const application of applications) {
+      const target =
+        targetMap.get(
+          this.auditLogApplicationTargetKey(
+            application.targetType,
+            application.targetId,
+          ),
+        ) ??
+        ({
+          id: application.targetId,
+          targetType: this.normalizeAuditApplicationTargetType(
+            application.targetType,
+          ),
+          title: 'Unavailable target',
+        } satisfies AdminAuditLogTarget);
+
+      applicationMap.set(application.id, {
+        id: application.id,
+        status: String(application.status ?? 'submitted').toUpperCase(),
+        applicant: application.applicant
+          ? this.serializeReviewAuthor(application.applicant)
+          : undefined,
+        owner: target.owner,
+        target: {
+          id: target.id,
+          targetType: target.targetType,
+          title: target.title,
+          status: target.status,
+          contentType: target.contentType,
+          contentDomain: target.contentDomain,
+        },
+      });
+    }
+
+    return applicationMap;
+  }
+
+  private buildAuditLogTargetFromHubItem(item: any): AdminAuditLogTarget {
+    const serializedItem = serializeHubItem(item);
+    return {
+      id: serializedItem.id,
+      targetType: 'HUB_ITEM',
+      title: serializedItem.title,
+      status: serializedItem.status,
+      contentType: serializedItem.type,
+      contentDomain: serializedItem.contentDomain,
+    };
+  }
+
+  private buildAuditLogTargetFromEnterpriseNeed(
+    item: any,
+  ): AdminAuditLogTarget {
+    const serializedItem = serializeEnterpriseNeed(item);
+    return {
+      id: serializedItem.id,
+      targetType: 'ENTERPRISE_NEED',
+      title: serializedItem.title,
+      status: serializedItem.status,
+      contentType: serializedItem.type,
+      contentDomain: serializedItem.contentDomain,
+    };
+  }
+
+  private buildAuditLogTargetFromResearchProject(
+    item: any,
+  ): AdminAuditLogTarget {
+    const serializedItem = serializeResearchProject(item);
+    return {
+      id: serializedItem.id,
+      targetType: 'RESEARCH_PROJECT',
+      title: serializedItem.title,
+      status: serializedItem.status,
+      contentType: serializedItem.type,
+      contentDomain: serializedItem.contentDomain,
+    };
+  }
+
+  private buildAuditLogTargetFromUser(user: any): AdminAuditLogTarget {
+    const serializedUser = this.serializeReviewAuthor(user);
+    return {
+      id: serializedUser.id,
+      targetType: 'USER',
+      title: serializedUser.name || serializedUser.email || serializedUser.id,
+      status: user.status?.toUpperCase?.() ?? undefined,
+    };
+  }
+
+  private buildAuditLogTargetFromReport(report: any): AdminAuditLogTarget {
+    return {
+      id: report.id,
+      targetType: 'REPORT',
+      title:
+        typeof report.reason === 'string' && report.reason.trim()
+          ? report.reason
+          : `Report ${report.id}`,
+      status: report.status?.toUpperCase?.() ?? undefined,
+    };
+  }
+
+  private buildFallbackAuditTarget(
+    targetType?: string,
+    targetId?: string | null,
+    metadata?: Record<string, unknown>,
+  ): AdminAuditLogTarget | undefined {
+    const normalizedTargetType = this.normalizeAdminAuditTargetType(targetType);
+    if (!normalizedTargetType) {
+      return undefined;
+    }
+
+    if (normalizedTargetType === 'INVITE') {
+      const inviteCount =
+        typeof metadata?.count === 'number'
+          ? metadata.count
+          : Array.isArray(metadata?.codes)
+            ? metadata.codes.length
+            : undefined;
+
+      return {
+        targetType: 'INVITE',
+        title:
+          typeof inviteCount === 'number'
+            ? `Generated ${inviteCount} invite codes`
+            : 'Invite codes',
+      };
+    }
+
+    return {
+      id: targetId ?? undefined,
+      targetType: normalizedTargetType,
+      title: targetId ? `${normalizedTargetType} ${targetId}` : normalizedTargetType,
+    };
+  }
+
+  private extractAuditLogMetadata(
+    metadata: unknown,
+  ): Record<string, unknown> | undefined {
+    if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+      return metadata as Record<string, unknown>;
+    }
+    return undefined;
+  }
+
+  private matchesAuditLogQuery(
+    item: AdminAuditLogItem,
+    normalizedQuery: string,
+  ) {
+    const metadataText = item.metadata ? JSON.stringify(item.metadata) : '';
+    const haystack = [
+      item.action,
+      item.targetType,
+      item.targetId,
+      item.actor?.name,
+      item.actor?.email,
+      item.actor?.id,
+      item.reason,
+      item.target?.title,
+      item.target?.targetType,
+      item.target?.status,
+      item.application?.id,
+      item.application?.status,
+      item.application?.applicant?.name,
+      item.application?.applicant?.email,
+      item.application?.applicant?.id,
+      item.application?.owner?.name,
+      item.application?.owner?.email,
+      item.application?.owner?.id,
+      metadataText,
+    ]
+      .filter((value): value is string => typeof value === 'string')
+      .join(' ')
+      .toLowerCase();
+
+    return haystack.includes(normalizedQuery);
+  }
+
+  private normalizeAuditLogLimit(limit?: number) {
+    if (typeof limit !== 'number' || Number.isNaN(limit)) {
+      return 100;
+    }
+
+    return Math.min(200, Math.max(1, Math.floor(limit)));
+  }
+
+  private normalizeAdminAuditTargetType(value: unknown) {
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+
+    const normalized = value.trim().toUpperCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    switch (normalized) {
+      case 'APPLICATION':
+      case 'ENTERPRISE_NEED':
+      case 'HUB_ITEM':
+      case 'INVITE':
+      case 'PROJECT':
+      case 'REPORT':
+      case 'RESEARCH_PROJECT':
+      case 'USER':
+      case 'USER_IDENTITY':
+        return normalized;
+      default:
+        return normalized;
+    }
+  }
+
+  private auditLogApplicationTargetKey(
+    targetType: ApplicationTargetType,
+    targetId: string,
+  ) {
+    return `${targetType}:${targetId}`;
+  }
+
+  private normalizeAuditApplicationTargetType(targetType: ApplicationTargetType) {
+    switch (targetType) {
+      case 'enterprise_need':
+        return 'ENTERPRISE_NEED';
+      case 'research_project':
+        return 'RESEARCH_PROJECT';
+      case 'hub_project':
+        return 'PROJECT';
+      default:
+        return 'PROJECT';
+    }
   }
 
   private generateCode(): string {
@@ -767,10 +1597,215 @@ export class AdminService {
     return where;
   }
 
-  private serializeDashboardReport(report: any): AdminDashboardReport {
+  private buildUserManagementWhere(
+    query: AdminUsersQuery,
+    includeFilters: boolean,
+  ): Prisma.UserWhereInput {
+    const where: Prisma.UserWhereInput = {
+      deletedAt: null,
+    };
+
+    if (includeFilters && query.role?.trim()) {
+      where.role = normalizeRoleValue(query.role) as any;
+    }
+
+    if (includeFilters && query.status?.trim()) {
+      const normalizedStatus = query.status.trim().toLowerCase();
+      if (
+        normalizedStatus === 'active' ||
+        normalizedStatus === 'pending_identity_review' ||
+        normalizedStatus === 'suspended'
+      ) {
+        where.status = normalizedStatus as any;
+      }
+    }
+
+    if (query.q?.trim()) {
+      const keyword = query.q.trim();
+      where.OR = [
+        { email: { contains: keyword, mode: 'insensitive' } },
+        {
+          profile: {
+            is: {
+              displayName: { contains: keyword, mode: 'insensitive' },
+            },
+          },
+        },
+        {
+          profile: {
+            is: {
+              headline: { contains: keyword, mode: 'insensitive' },
+            },
+          },
+        },
+        {
+          profile: {
+            is: {
+              org: { contains: keyword, mode: 'insensitive' },
+            },
+          },
+        },
+        {
+          profile: {
+            is: {
+              contactEmail: { contains: keyword, mode: 'insensitive' },
+            },
+          },
+        },
+        {
+          profile: {
+            is: {
+              phone: { contains: keyword, mode: 'insensitive' },
+            },
+          },
+        },
+      ];
+    }
+
+    return where;
+  }
+
+  private async serializeDashboardReports(reports: any[]) {
+    const userTargetIds = Array.from(
+      new Set(
+        reports
+          .filter((report) => report.targetType === 'user')
+          .map((report) => report.targetId),
+      ),
+    );
+    const messageTargetIds = Array.from(
+      new Set(
+        reports
+          .filter((report) => report.targetType === 'message')
+          .map((report) => report.targetId),
+      ),
+    );
+    const conversationTargetIds = Array.from(
+      new Set(
+        reports
+          .filter((report) => report.targetType === 'conversation')
+          .map((report) => report.targetId),
+      ),
+    );
+
+    const [targetUsers, targetMessages, targetConversations] = await Promise.all([
+      userTargetIds.length > 0
+        ? this.prisma.user.findMany({
+            where: { id: { in: userTargetIds }, deletedAt: null },
+            include: this.reviewUserInclude,
+          })
+        : Promise.resolve([]),
+      messageTargetIds.length > 0
+        ? this.prisma.message.findMany({
+            where: { id: { in: messageTargetIds } },
+            include: {
+              sender: {
+                include: this.reviewUserInclude,
+              },
+              conversation: {
+                include: {
+                  members: {
+                    include: {
+                      user: {
+                        include: this.reviewUserInclude,
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          })
+        : Promise.resolve([]),
+      conversationTargetIds.length > 0
+        ? this.prisma.conversation.findMany({
+            where: { id: { in: conversationTargetIds } },
+            include: {
+              members: {
+                include: {
+                  user: {
+                    include: this.reviewUserInclude,
+                  },
+                },
+              },
+              messages: {
+                take: 1,
+                orderBy: { createdAt: 'desc' },
+              },
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const userMap = new Map(
+      targetUsers.map((user) => [user.id, this.serializeReviewAuthor(user)]),
+    );
+    const messageMap = new Map(
+      targetMessages.map((message) => [
+        message.id,
+        {
+          userId: message.senderId,
+          userName:
+            this.serializeReviewAuthor(message.sender).name ||
+            message.sender.email,
+          conversationId: message.conversationId,
+          preview: (message.bodyText ?? '').slice(0, 180),
+          participantNames: message.conversation.members
+            .map((member) => this.serializeReviewAuthor(member.user).name)
+            .filter(Boolean),
+        },
+      ]),
+    );
+    const conversationMap = new Map(
+      targetConversations.map((conversation) => [
+        conversation.id,
+        {
+          preview: (conversation.messages[0]?.bodyText ?? '').slice(0, 180),
+          participantNames: conversation.members
+            .map((member) => this.serializeReviewAuthor(member.user).name)
+            .filter(Boolean),
+        },
+      ]),
+    );
+
+    return reports.map((report) =>
+      this.serializeDashboardReport(report, userMap, messageMap, conversationMap),
+    );
+  }
+
+  private serializeDashboardReport(
+    report: any,
+    userMap: Map<string, SerializedUser>,
+    messageMap: Map<
+      string,
+      {
+        userId: string;
+        userName: string;
+        conversationId: string;
+        preview: string;
+        participantNames: string[];
+      }
+    >,
+    conversationMap: Map<
+      string,
+      {
+        preview: string;
+        participantNames: string[];
+      }
+    >,
+  ): AdminDashboardReport {
     const reporter = report.reporter
       ? this.serializeReviewAuthor(report.reporter)
       : undefined;
+    const targetUser =
+      report.targetType === 'user' ? userMap.get(report.targetId) : undefined;
+    const targetMessage =
+      report.targetType === 'message'
+        ? messageMap.get(report.targetId)
+        : undefined;
+    const targetConversation =
+      report.targetType === 'conversation'
+        ? conversationMap.get(report.targetId)
+        : undefined;
 
     return {
       id: report.id,
@@ -783,6 +1818,18 @@ export class AdminService {
       createdAt:
         report.createdAt?.toISOString?.() ?? String(report.createdAt ?? ''),
       reporter,
+      targetUserId: targetUser?.id ?? targetMessage?.userId ?? undefined,
+      targetUserName:
+        targetUser?.name ?? targetMessage?.userName ?? undefined,
+      targetConversationId:
+        targetMessage?.conversationId ??
+        (report.targetType === 'conversation' ? report.targetId : undefined),
+      targetMessagePreview:
+        targetMessage?.preview ?? targetConversation?.preview ?? undefined,
+      targetParticipantNames:
+        targetMessage?.participantNames ??
+        targetConversation?.participantNames ??
+        undefined,
     };
   }
 }

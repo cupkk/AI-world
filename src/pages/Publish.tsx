@@ -15,11 +15,20 @@ import { StatusBadge } from "../components/ui/StatusBadge";
 import { PageHeader } from "../components/ui/PageHeader";
 import { EmptyState, LoadingSkeleton, ErrorState } from "../components/ui/StateDisplay";
 import { ContentType, ContentVisibility, Content } from "../types";
-import { AlertTriangle, FileText, Plus, Save, Send } from "lucide-react";
+import { AlertTriangle, FileText, Loader2, Pencil, Plus, Save, Send, Trash2 } from "lucide-react";
 import { usePageTitle } from "../lib/usePageTitle";
 import { useTranslation } from "../hooks/useTranslation";
 import { detectRecruitmentKeywords } from "../lib/recruitment";
-import { createPublishDraftByApi, fetchMyPublishContentsByApi, submitPublishByApi } from "../lib/api";
+import {
+  getContentDomainMeta,
+  getContentPreviewSections,
+} from "../lib/contentDomain";
+import {
+  createPublishDraftByApi,
+  deleteHubContentByApi,
+  fetchMyPublishContentsByApi,
+  submitPublishByApi,
+} from "../lib/api";
 
 // Content types available per role
 const ROLE_CONTENT_TYPES: Record<string, { types: ContentType[]; defaultType: ContentType }> = {
@@ -29,6 +38,27 @@ const ROLE_CONTENT_TYPES: Record<string, { types: ContentType[]; defaultType: Co
   ADMIN: { types: ["CONTEST", "PAPER", "POLICY", "PROJECT", "TOOL"], defaultType: "PAPER" },
 };
 
+const EDITABLE_CONTENT_STATUSES: Content["status"][] = [
+  "DRAFT",
+  "REJECTED",
+  "PUBLISHED",
+];
+
+function getAuthoringContentDomain(
+  role: string | undefined,
+  type: ContentType,
+): Content["contentDomain"] {
+  if (type === "PROJECT" && role === "ENTERPRISE_LEADER") {
+    return "ENTERPRISE_NEED";
+  }
+
+  if (type === "PROJECT" && role === "EXPERT") {
+    return "RESEARCH_PROJECT";
+  }
+
+  return "HUB_ITEM";
+}
+
 export function Publish() {
   const { t } = useTranslation();
   usePageTitle(t("publish.title"));
@@ -37,6 +67,7 @@ export function Publish() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingContents, setIsLoadingContents] = useState(true);
   const [hasLoadError, setHasLoadError] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -49,9 +80,28 @@ export function Publish() {
   // Enterprise-specific fields
   const [projectBackground, setProjectBackground] = useState("");
   const [projectGoal, setProjectGoal] = useState("");
+  const [neededSupport, setNeededSupport] = useState("");
 
   // My existing content
   const myContents = apiMyContents;
+  const authoringContentDomain = useMemo(
+    () => getAuthoringContentDomain(user?.role, type),
+    [type, user?.role],
+  );
+  const isEnterpriseNeedDraft = authoringContentDomain === "ENTERPRISE_NEED";
+  const isResearchProjectDraft = authoringContentDomain === "RESEARCH_PROJECT";
+  const descriptionLabel = isEnterpriseNeedDraft
+    ? t("hub_detail.section_deliverables")
+    : t("publish.content_desc");
+  const descriptionPlaceholder = isEnterpriseNeedDraft
+    ? t("hub_detail.section_deliverables")
+    : t("publish.content_desc_pl");
+
+  useEffect(() => {
+    if (!roleConfig.types.includes(type)) {
+      setType(roleConfig.defaultType);
+    }
+  }, [roleConfig.defaultType, roleConfig.types, type]);
 
   useEffect(() => {
     let active = true;
@@ -99,10 +149,6 @@ export function Publish() {
       return;
     }
 
-    const fullDescription =
-      user.role === "ENTERPRISE_LEADER" && (projectBackground || projectGoal)
-        ? `${description}\n\n**${t("publish.project_bg")}:** ${projectBackground}\n\n**${t("publish.project_goal")}:** ${projectGoal}`
-        : description;
     const parsedTags = tags
       .split(",")
       .map((tag) => tag.trim())
@@ -113,10 +159,20 @@ export function Publish() {
     try {
       const created = await createPublishDraftByApi({
         title,
-        description: fullDescription,
+        description,
         type,
         tags: parsedTags,
-        visibility: user.role === "ENTERPRISE_LEADER" ? visibility : "ALL",
+        ...(isEnterpriseNeedDraft
+          ? {
+              visibility,
+              background: projectBackground || undefined,
+              goal: projectGoal || undefined,
+              deliverables: description || undefined,
+            }
+          : {}),
+        ...(isResearchProjectDraft
+          ? { neededSupport: neededSupport || undefined }
+          : {}),
       });
 
       if (asDraft) {
@@ -159,7 +215,30 @@ export function Publish() {
     setTags("");
     setProjectBackground("");
     setProjectGoal("");
+    setNeededSupport("");
+    setVisibility("ALL");
     setShowForm(false);
+  };
+
+  const handleDelete = async (contentId: string, contentTitle: string) => {
+    const confirmed = window.confirm(
+      `${t("publish.delete_confirm")}\n\n${contentTitle}`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingId(contentId);
+
+    try {
+      await deleteHubContentByApi(contentId);
+      setApiMyContents((prev) => prev.filter((item) => item.id !== contentId));
+      toast.success(t("publish.delete_success"));
+    } catch {
+      toast.error(t("publish.delete_failed"));
+    } finally {
+      setDeletingId(null);
+    }
   };
 
   if (hasLoadError) return <ErrorState onRetry={() => { setHasLoadError(false); setIsLoadingContents(true); fetchMyPublishContentsByApi().then(r => setApiMyContents(r)).catch(() => setHasLoadError(true)).finally(() => setIsLoadingContents(false)); }} />;
@@ -221,6 +300,17 @@ export function Publish() {
             </CardHeader>
             <CardContent>
               <div className="space-y-6">
+                <div>
+                  {(() => {
+                    const meta = getContentDomainMeta(authoringContentDomain, t);
+                    return (
+                      <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-medium ${meta.className}`}>
+                        <meta.Icon className="h-3.5 w-3.5" />
+                        {meta.label}
+                      </span>
+                    );
+                  })()}
+                </div>
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-zinc-300">
                     {t("publish.content_type")}
@@ -266,6 +356,7 @@ export function Publish() {
                               e.target.value as ContentVisibility
                             )
                           }
+                          data-testid="publish-form-visibility-all-radio"
                           className="text-indigo-500 focus:ring-indigo-500 bg-zinc-900 border-white/10"
                         />
                         <span className="text-sm text-zinc-300">
@@ -283,6 +374,7 @@ export function Publish() {
                               e.target.value as ContentVisibility
                             )
                           }
+                          data-testid="publish-form-visibility-experts-radio"
                           className="text-indigo-500 focus:ring-indigo-500 bg-zinc-900 border-white/10"
                         />
                         <span className="text-sm text-zinc-300">
@@ -303,24 +395,26 @@ export function Publish() {
                       setTitle(e.target.value)
                     }
                     placeholder={t("publish.content_title_pl")}
+                    data-testid="publish-form-title-input"
                   />
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-zinc-300">
-                    {t("publish.content_desc")}
+                    {descriptionLabel}
                   </label>
                   <p className="text-xs text-zinc-500">{t("publish.content_desc_help")}</p>
                   <textarea
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
+                    data-testid="publish-form-description-input"
                     className="flex min-h-[120px] w-full rounded-md border border-white/10 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 backdrop-blur-sm transition-all resize-none"
-                    placeholder={t("publish.content_desc_pl")}
+                    placeholder={descriptionPlaceholder}
                   />
                 </div>
 
                 {/* Enterprise-specific fields */}
-                {user?.role === "ENTERPRISE_LEADER" && (
+                {isEnterpriseNeedDraft && (
                   <>
                     <div className="space-y-2">
                       <label className="text-sm font-medium text-zinc-300">
@@ -331,6 +425,7 @@ export function Publish() {
                         onChange={(e) =>
                           setProjectBackground(e.target.value)
                         }
+                        data-testid="publish-form-background-input"
                         className="flex min-h-[80px] w-full rounded-md border border-white/10 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 backdrop-blur-sm resize-none"
                         placeholder={t("publish.project_bg_pl")}
                       />
@@ -342,11 +437,27 @@ export function Publish() {
                       <textarea
                         value={projectGoal}
                         onChange={(e) => setProjectGoal(e.target.value)}
+                        data-testid="publish-form-goal-input"
                         className="flex min-h-[80px] w-full rounded-md border border-white/10 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 backdrop-blur-sm resize-none"
                         placeholder={t("publish.project_goal_pl")}
                       />
                     </div>
                   </>
+                )}
+
+                {isResearchProjectDraft && (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-zinc-300">
+                      {t("hub_detail.section_needed_support")}
+                    </label>
+                    <textarea
+                      value={neededSupport}
+                      onChange={(e) => setNeededSupport(e.target.value)}
+                      data-testid="publish-form-needed-support-input"
+                      className="flex min-h-[80px] w-full rounded-md border border-white/10 bg-zinc-900/50 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 focus-visible:ring-offset-zinc-950 backdrop-blur-sm resize-none"
+                      placeholder={t("hub_detail.section_needed_support")}
+                    />
+                  </div>
                 )}
 
                 <div className="space-y-2">
@@ -375,7 +486,7 @@ export function Publish() {
                     variant="outline"
                     className="gap-2"
                     onClick={() => handleSubmit(true)}
-                    disabled={isSubmitting || (user.role === "ENTERPRISE_LEADER" && detectedKeywords.length > 0)}
+                    disabled={isSubmitting || (user?.role === "ENTERPRISE_LEADER" && detectedKeywords.length > 0)}
                   >
                     <Save className="h-4 w-4" />
                     {t("publish.save_draft")}
@@ -385,7 +496,7 @@ export function Publish() {
                     className="gap-2"
                     data-testid="publish-submit-review-btn"
                     onClick={() => handleSubmit(false)}
-                    disabled={isSubmitting || (user.role === "ENTERPRISE_LEADER" && detectedKeywords.length > 0)}
+                    disabled={isSubmitting || (user?.role === "ENTERPRISE_LEADER" && detectedKeywords.length > 0)}
                   >
                     <Send className="h-4 w-4" />
                     {t("publish.submit_review")}
@@ -403,33 +514,100 @@ export function Publish() {
           <h2 className="text-lg font-semibold text-zinc-100">
             {t("publish.my_submissions")} ({myContents.length})
           </h2>
-          {myContents.map((content) => (
-            <Link key={content.id} to={`/publish/${content.id}`}>
-              <Card className="glass-panel hover:border-indigo-500/30 transition-all cursor-pointer">
-                <CardContent className="flex items-center gap-4 p-4">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <StatusBadge status={content.status} />
-                      <span className="text-xs text-zinc-500 uppercase tracking-wider">
-                        {content.type}
-                      </span>
+          {myContents.map((content) => {
+            const previewSections = getContentPreviewSections(content, t);
+            const isEditable = EDITABLE_CONTENT_STATUSES.includes(content.status);
+            const isDeleting = deletingId === content.id;
+            return (
+              <Card
+                key={content.id}
+                className="glass-panel transition-all hover:border-indigo-500/30"
+              >
+                <CardContent className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start">
+                  <Link
+                    to={`/publish/${content.id}`}
+                    className="min-w-0 flex-1 rounded-lg transition-opacity hover:opacity-90"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <StatusBadge status={content.status} />
+                        {(() => {
+                          const meta = getContentDomainMeta(content.contentDomain, t);
+                          return (
+                            <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${meta.className}`}>
+                              <meta.Icon className="h-3 w-3" />
+                              {meta.label}
+                            </span>
+                          );
+                        })()}
+                        <span className="text-xs text-zinc-500 uppercase tracking-wider">
+                          {content.type}
+                        </span>
+                      </div>
+                      <p className="font-medium text-zinc-100 truncate">
+                        <span data-testid="publish-item-title">{content.title}</span>
+                      </p>
+                      <p className="text-xs text-zinc-500 mt-0.5">
+                        {new Date(content.createdAt).toLocaleDateString()}
+                      </p>
+                      {previewSections.length > 0 ? (
+                        <div className="mt-2 space-y-1">
+                          {previewSections.slice(0, 2).map((section) => (
+                            <div key={section.key}>
+                              <p className="text-[10px] uppercase tracking-[0.16em] text-zinc-500">
+                                {section.label}
+                              </p>
+                              <p
+                                className="line-clamp-1 text-xs text-zinc-400"
+                                data-testid={`publish-item-preview-${content.id}-${section.key}`}
+                              >
+                                {section.value}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {content.status === "REJECTED" && content.rejectReason && (
+                        <div className="text-xs text-red-400 max-w-[200px] truncate">
+                          {t("publish.reason")}: {content.rejectReason}
+                        </div>
+                      )}
                     </div>
-                    <p className="font-medium text-zinc-100 truncate">
-                      <span data-testid="publish-item-title">{content.title}</span>
-                    </p>
-                    <p className="text-xs text-zinc-500 mt-0.5">
-                      {new Date(content.createdAt).toLocaleDateString()}
-                    </p>
+                  </Link>
+                  <div className="flex shrink-0 items-center gap-2 self-end sm:self-start">
+                    {isEditable ? (
+                      <Link to={`/publish/${content.id}`}>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2"
+                          data-testid={`publish-item-edit-${content.id}`}
+                        >
+                          <Pencil className="h-4 w-4" />
+                          {t("publish.edit_action")}
+                        </Button>
+                      </Link>
+                    ) : null}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="gap-2 text-red-300 hover:bg-red-500/10 hover:text-red-200"
+                      onClick={() => void handleDelete(content.id, content.title)}
+                      disabled={isDeleting}
+                      data-testid={`publish-item-delete-${content.id}`}
+                    >
+                      {isDeleting ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                      {t("publish.delete_action")}
+                    </Button>
                   </div>
-                  {content.status === "REJECTED" && content.rejectReason && (
-                    <div className="text-xs text-red-400 max-w-[200px] truncate">
-                      {t("publish.reason")}: {content.rejectReason}
-                    </div>
-                  )}
                 </CardContent>
               </Card>
-            </Link>
-          ))}
+            );
+          })}
         </div>
       ) : !showForm ? (
         <EmptyState

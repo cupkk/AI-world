@@ -1,5 +1,6 @@
 import {
   normalizeApplicationStatusValue,
+  normalizeContentDomainValue,
   normalizeApplicationTargetTypeValue,
   normalizeContentStatusValue,
   normalizeContentTypeValue,
@@ -15,12 +16,17 @@ export interface SerializedContent {
   title: string;
   description: string;
   type: string;
+  contentDomain: string;
   status: string;
   authorId: string;
   createdAt: string;
   tags: string[];
   likes: number;
   views: number;
+  background?: string;
+  goal?: string;
+  deliverables?: string;
+  neededSupport?: string;
   coverImage?: string;
   visibility?: string;
   rejectReason?: string;
@@ -33,6 +39,7 @@ export function serializeHubItem(item: any): SerializedContent {
     title: item.title ?? "",
     description: item.summary ?? "",
     type: normalizeContentTypeValue(item.type),
+    contentDomain: normalizeContentDomainValue("HUB_ITEM"),
     status: normalizeContentStatusValue(item.reviewStatus),
     authorId: item.authorUserId ?? item.adminUserId ?? "",
     createdAt: item.createdAt?.toISOString?.() ?? String(item.createdAt ?? ""),
@@ -50,16 +57,23 @@ export function serializeEnterpriseNeed(item: any): SerializedContent {
   return {
     id: item.id,
     title: item.title ?? "",
-    description: item.background ?? "",
+    description: item.deliverables ?? item.background ?? "",
     type: "PROJECT",
+    contentDomain: normalizeContentDomainValue("ENTERPRISE_NEED"),
     status: normalizeContentStatusValue(item.reviewStatus),
     authorId: item.enterpriseUserId ?? "",
     createdAt: item.createdAt?.toISOString?.() ?? String(item.createdAt ?? ""),
     tags: Array.isArray(item.requiredRoles) ? item.requiredRoles : [],
     likes: 0,
     views: 0,
+    background: item.background ?? undefined,
+    goal: item.goal ?? undefined,
+    deliverables: item.deliverables ?? undefined,
     visibility: normalizeContentVisibilityValue(item.visibility),
     rejectReason: item.rejectReason ?? undefined,
+    ...(item.enterprise
+      ? { author: serializeUser(item.enterprise, { maskEmail: true }) }
+      : {}),
   };
 }
 
@@ -69,13 +83,16 @@ export function serializeResearchProject(item: any): SerializedContent {
     title: item.title ?? "",
     description: item.summary ?? "",
     type: "PROJECT",
+    contentDomain: normalizeContentDomainValue("RESEARCH_PROJECT"),
     status: normalizeContentStatusValue(item.reviewStatus),
     authorId: item.expertUserId ?? "",
     createdAt: item.createdAt?.toISOString?.() ?? String(item.createdAt ?? ""),
     tags: Array.isArray(item.tags) ? item.tags : [],
     likes: 0,
     views: 0,
+    neededSupport: item.neededSupport ?? undefined,
     rejectReason: item.rejectReason ?? undefined,
+    ...(item.expert ? { author: serializeUser(item.expert, { maskEmail: true }) } : {}),
   };
 }
 
@@ -115,6 +132,11 @@ export interface SerializedUser {
 export function serializeUser(user: any, opts?: { maskEmail?: boolean }): SerializedUser {
   const profile = user.profile ?? {};
   const tags = profile.profileTags?.map((pt: any) => pt.tag?.name ?? pt.tagName).filter(Boolean) ?? [];
+  const blockedUsers = Array.isArray(user.blocksGiven)
+    ? user.blocksGiven
+        .map((block: any) => block?.blockedId)
+        .filter((value: unknown): value is string => typeof value === 'string')
+    : undefined;
 
   let accountEmail = user.email ?? "";
   if (opts?.maskEmail && profile.emailVisibility === "hidden") {
@@ -151,6 +173,7 @@ export function serializeUser(user: any, opts?: { maskEmail?: boolean }): Serial
     whatICanProvide: profile.whatICanProvide ?? undefined,
     whatImLookingFor: profile.whatImLookingFor ?? undefined,
     aiStrategy: profile.aiStrategy ?? undefined,
+    blockedUsers,
     phone: profile.phone ?? undefined,
     phonePublic: profile.phonePublic ?? false,
     companyName: profile.companyName ?? undefined,

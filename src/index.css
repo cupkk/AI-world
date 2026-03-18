@@ -15,6 +15,10 @@
   .glass-panel {
     @apply bg-zinc-900/60 backdrop-blur-xl border border-white/10 shadow-xl;
   }
+
+  .project-opps-title-clean > span:first-of-type {
+    display: none;
+  }
   
   .mesh-bg {
     background-image: 

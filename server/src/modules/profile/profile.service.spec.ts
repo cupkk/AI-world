@@ -11,6 +11,12 @@ const mockPrisma = {
   hubItem: {
     findMany: jest.fn(),
   },
+  enterpriseNeed: {
+    findMany: jest.fn(),
+  },
+  researchProject: {
+    findMany: jest.fn(),
+  },
   profile: {
     upsert: jest.fn(),
   },
@@ -94,6 +100,18 @@ describe('ProfileService', () => {
           hubItemTags: [{ tag: { name: 'Tooling' } }],
         },
       ]);
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([]);
+      mockPrisma.researchProject.findMany.mockResolvedValue([
+        {
+          id: 'research-1',
+          title: 'Evaluation Research Track',
+          summary: 'A deeper evaluation research collaboration.',
+          tags: ['Evaluation', 'Research'],
+          reviewStatus: 'published',
+          expertUserId: 'user-1',
+          createdAt: new Date('2026-03-15T10:00:00.000Z'),
+        },
+      ]);
 
       const result = await service.getProfilePage('user-1', 'viewer-1');
 
@@ -103,14 +121,24 @@ describe('ProfileService', () => {
           name: 'Research Lead',
         },
         summary: {
-          publishedContentCount: 2,
+          publishedContentCount: 3,
           totalViews: 14,
           totalLikes: 6,
           featuredTypes: ['PROJECT', 'TOOL'],
+          domainCounts: {
+            hubItems: 2,
+            enterpriseNeeds: 0,
+            researchProjects: 1,
+          },
         },
       });
-      expect(result.contents).toHaveLength(2);
+      expect(result.contents).toHaveLength(3);
       expect(result.contents[0]).toMatchObject({
+        id: 'research-1',
+        title: 'Evaluation Research Track',
+        contentDomain: 'RESEARCH_PROJECT',
+      });
+      expect(result.contents[1]).toMatchObject({
         id: 'hub-1',
         title: 'Policy Sprint',
       });
@@ -118,6 +146,8 @@ describe('ProfileService', () => {
 
     it('should throw when the target profile does not exist', async () => {
       mockPrisma.user.findUnique.mockResolvedValue(null);
+      mockPrisma.enterpriseNeed.findMany.mockResolvedValue([]);
+      mockPrisma.researchProject.findMany.mockResolvedValue([]);
 
       await expect(service.getProfilePage('missing-user')).rejects.toThrow(
         NotFoundException,

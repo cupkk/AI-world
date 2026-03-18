@@ -8,6 +8,14 @@ const mockPrisma: any = {
     count: jest.fn(),
     findMany: jest.fn(),
   },
+  enterpriseNeed: {
+    count: jest.fn(),
+    findMany: jest.fn(),
+  },
+  researchProject: {
+    count: jest.fn(),
+    findMany: jest.fn(),
+  },
   application: {
     findMany: jest.fn(),
   },
@@ -95,6 +103,32 @@ describe('LearnerService', () => {
         },
       ]);
     mockPrisma.hubItem.count.mockResolvedValue(9);
+    mockPrisma.enterpriseNeed.count.mockResolvedValue(2);
+    mockPrisma.enterpriseNeed.findMany.mockResolvedValue([
+      {
+        id: 'need-1',
+        title: 'Enterprise Evaluation Need',
+        background: 'Looking for learners to support evaluation delivery',
+        reviewStatus: 'published',
+        enterpriseUserId: 'enterprise-1',
+        createdAt: new Date('2026-03-15T10:00:00.000Z'),
+        requiredRoles: ['LEARNER'],
+        visibility: 'public_all',
+      },
+    ]);
+    mockPrisma.researchProject.count.mockResolvedValue(3);
+    mockPrisma.researchProject.findMany.mockResolvedValue([
+      {
+        id: 'research-1',
+        title: 'Open Research Collaboration',
+        summary: 'Need learner support for benchmark analysis',
+        neededSupport: 'Benchmark evaluation',
+        reviewStatus: 'published',
+        expertUserId: 'expert-3',
+        tags: ['Benchmark'],
+        createdAt: new Date('2026-03-16T10:00:00.000Z'),
+      },
+    ]);
     mockApplicationsService.listOutbox.mockResolvedValue([
       {
         id: 'app-1',
@@ -121,7 +155,7 @@ describe('LearnerService', () => {
     expect(result).toEqual({
       stats: {
         publishedContentCount: 1,
-        availableContentCount: 9,
+        availableContentCount: 14,
         pendingReviewCount: 1,
         applicationCount: 1,
       },
@@ -134,13 +168,24 @@ describe('LearnerService', () => {
       ],
       projectOpportunities: [
         expect.objectContaining({
+          id: 'research-1',
+          contentDomain: 'RESEARCH_PROJECT',
+          type: 'PROJECT',
+        }),
+        expect.objectContaining({
+          id: 'need-1',
+          contentDomain: 'ENTERPRISE_NEED',
+          type: 'PROJECT',
+        }),
+        expect.objectContaining({
           id: 'pub-2',
           type: 'CONTEST',
         }),
       ],
       recommendedContents: [
+        expect.objectContaining({ id: 'research-1' }),
+        expect.objectContaining({ id: 'need-1' }),
         expect.objectContaining({ id: 'pub-1' }),
-        expect.objectContaining({ id: 'pub-2' }),
       ],
       myContents: [
         expect.objectContaining({

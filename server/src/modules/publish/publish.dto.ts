@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { HubItemType } from '@prisma/client';
+import { HubItemType, NeedVisibility } from '@prisma/client';
 import { IsArray, IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class CreatePublishItemDto {
@@ -41,6 +41,35 @@ export class CreatePublishItemDto {
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  background?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  goal?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  deliverables?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  neededSupport?: string;
+
+  @ApiPropertyOptional({ enum: NeedVisibility })
+  @IsOptional()
+  @IsEnum(NeedVisibility)
+  visibility?: NeedVisibility;
 }
 
 export class UpdatePublishItemDto {
@@ -84,4 +113,33 @@ export class UpdatePublishItemDto {
   @IsArray()
   @IsString({ each: true })
   tags?: string[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  background?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  goal?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  deliverables?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(10000)
+  neededSupport?: string;
+
+  @ApiPropertyOptional({ enum: NeedVisibility })
+  @IsOptional()
+  @IsEnum(NeedVisibility)
+  visibility?: NeedVisibility;
 }

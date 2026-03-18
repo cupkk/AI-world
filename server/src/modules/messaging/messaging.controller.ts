@@ -118,6 +118,12 @@ export class MessagingController {
 export class SafetyController {
   constructor(private readonly service: MessagingService) {}
 
+  @Get('blocks')
+  @ApiOperation({ summary: '鑾峰彇鎷夐粦鍚嶅崟' })
+  async listBlockedUsers(@CurrentUser() user: CurrentUserPayload) {
+    return this.service.listBlockedUsers(user.id);
+  }
+
   @Post('block')
   @ActiveOnly()
   @ApiOperation({ summary: '拉黑用户' })

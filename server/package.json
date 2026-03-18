@@ -21,22 +21,17 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:seed": "npx prisma db seed",
     "prisma:studio": "prisma studio",
-    "ops:backup": "bash ./scripts/backup-db.sh production",
-    "ops:backup:staging": "bash ./scripts/backup-db.sh staging",
-    "ops:restore": "bash ./scripts/restore-db.sh production",
-    "ops:restore:staging": "bash ./scripts/restore-db.sh staging",
-    "ops:check:prod": "bash ./scripts/check-stack.sh production",
-    "ops:check:staging": "bash ./scripts/check-stack.sh staging",
-    "ops:certs": "bash ./scripts/issue-certificate.sh ai-world.asia www.ai-world.asia staging.ai-world.asia",
+    "ops:backup": "bash ./scripts/backup-db.sh",
+    "ops:restore": "bash ./scripts/restore-db.sh",
+    "ops:check": "bash ./scripts/check-stack.sh",
+    "ops:certs": "bash ./scripts/issue-certificate.sh ai-world.asia www.ai-world.asia",
     "ops:edge:up": "docker compose -f ./ops/docker-compose.edge.yml up -d",
     "ops:edge:down": "docker compose -f ./ops/docker-compose.edge.yml down",
     "ops:observability:up": "docker compose -f ./ops/docker-compose.observability.yml up -d",
     "ops:observability:down": "docker compose -f ./ops/docker-compose.observability.yml down",
     "ops:observability:check": "bash ./scripts/verify-observability.sh",
     "docker:prod:up": "docker compose -p aiworld-production -f ./docker-compose.prod.yml up -d",
-    "docker:prod:down": "docker compose -p aiworld-production -f ./docker-compose.prod.yml down",
-    "docker:staging:up": "docker compose -p aiworld-staging -f ./docker-compose.staging.yml up -d",
-    "docker:staging:down": "docker compose -p aiworld-staging -f ./docker-compose.staging.yml down"
+    "docker:prod:down": "docker compose -p aiworld-production -f ./docker-compose.prod.yml down"
   },
   "prisma": {
     "seed": "npx tsx prisma/seed.ts"

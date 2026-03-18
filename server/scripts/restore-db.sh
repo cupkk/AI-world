@@ -8,11 +8,11 @@ source "${script_dir}/stack-env.sh"
 usage() {
   cat <<'EOF'
 Usage:
-  restore-db.sh [production|staging] [backup-file] [--force] [--dry-run]
+  restore-db.sh [backup-file] [--force] [--dry-run]
 
 Examples:
-  ./scripts/restore-db.sh production --dry-run
-  ./scripts/restore-db.sh staging /opt/aiworld/backups/staging/aiworld_staging_20260312_120000.dump --force
+  ./scripts/restore-db.sh --dry-run
+  ./scripts/restore-db.sh /opt/aiworld/backups/production/aiworld_20260312_120000.dump --force
 EOF
 }
 
@@ -23,7 +23,7 @@ dry_run=0
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    production|staging)
+    production)
       stack="$1"
       shift
       ;;
